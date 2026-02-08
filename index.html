@@ -1,0 +1,93 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WAPulse | Premium WhatsApp SaaS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        --wp-primary: #128C7E;
+        --wp-secondary: #075E54;
+        --wp-accent: #25D366;
+      }
+      
+      body {
+        font-family: 'Plus Jakarta Sans', 'IBM Plex Sans Arabic', sans-serif;
+        letter-spacing: -0.01em;
+        margin: 0;
+        padding: 0;
+        background-color: #ffffff;
+      }
+
+      [dir="rtl"] {
+        font-family: 'IBM Plex Sans Arabic', sans-serif;
+      }
+
+      /* Ultra White Modern Theme */
+      .premium-card {
+        @apply transition-all duration-300 bg-white border border-slate-100;
+        box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.03);
+      }
+      .premium-card:hover {
+        @apply -translate-y-1;
+        box-shadow: 0 20px 30px -10px rgba(0, 0, 0, 0.05);
+      }
+
+      .dark .premium-card {
+        @apply bg-slate-900/50 border-white/5;
+        box-shadow: none;
+      }
+
+      .btn-primary-gradient {
+        background: linear-gradient(135deg, #128C7E 0%, #075E54 100%);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .btn-primary-gradient:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px -5px rgba(18, 140, 126, 0.3);
+      }
+
+      .scrollbar-hide::-webkit-scrollbar { display: none; }
+      .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+      
+      .page-enter {
+        animation: fadeIn 0.4s ease-out;
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      /* Smooth focus states */
+      input:focus, textarea:focus {
+        @apply ring-2 ring-emerald-500/10 border-emerald-500/30 outline-none !important;
+      }
+
+      /* Transitions */
+      .theme-transition {
+        transition: background-color 0.5s ease, border-color 0.5s ease, color 0.5s ease;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "recharts": "https://esm.sh/recharts@^3.7.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-white dark:bg-[#020617] transition-colors duration-500 overflow-hidden">
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
