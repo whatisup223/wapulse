@@ -265,7 +265,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className={`dashboard-app flex h-screen overflow-hidden theme-transition ${isDarkMode ? 'bg-[#020617] dark' : 'bg-white'}`}>
+    <div className={`dashboard-app flex h-screen overflow-hidden theme-transition ${isDarkMode ? 'bg-[#020617] dark' : 'bg-slate-50'}`}>
       <Sidebar
         currentPage={currentPage}
         setCurrentPage={(page) => {
@@ -290,7 +290,7 @@ const App: React.FC = () => {
           onMenuClick={() => setIsMobileSidebarOpen(true)}
         />
 
-        <main className={`flex-1 overflow-y-auto scrollbar-hide theme-transition ${isDarkMode ? '' : 'bg-white'}`}>
+        <main className={`flex-1 overflow-y-auto scrollbar-hide theme-transition ${isDarkMode ? '' : 'bg-slate-50'}`}>
           <div className="max-w-[1600px] mx-auto">
             {renderContent()}
           </div>

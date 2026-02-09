@@ -1,10 +1,8 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, Filter, MoreVertical, Send, Paperclip, Smile, CheckCheck, MessageSquare, ChevronLeft, ChevronRight, User as UserIcon, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Search, MoreVertical, Send, Paperclip, Smile, CheckCheck, MessageSquare, ChevronLeft, User as UserIcon, Loader2, AlertCircle, RefreshCw, Phone, Video, PanelLeftClose, PanelLeftOpen, ArrowLeft, ChevronDown, Smartphone } from 'lucide-react';
 
 interface InboxProps {
   language: 'en' | 'ar';
-  userId: string;
 }
 
 interface EvolutionChat {
@@ -24,12 +22,28 @@ interface EvolutionMessage {
   chatId: string;
 }
 
+interface EvolutionSession {
+  instanceName: string;
+  ownerJid?: string;
+  profilePicUrl?: string; // Standardized property
+  status: 'open' | 'close' | 'connecting';
+}
+
 const EVOLUTION_URL = import.meta.env.VITE_EVOLUTION_URL;
 const EVOLUTION_API_KEY = import.meta.env.VITE_EVOLUTION_API_KEY;
 
-const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
+const Inbox: React.FC<InboxProps> = ({ language }) => {
   const isRtl = language === 'ar';
-  const SESSION_NAME = userId;
+
+  // Multi-Session Management
+  const [availableSessions, setAvailableSessions] = useState<EvolutionSession[]>([]);
+  const [currentSession, setCurrentSession] = useState<EvolutionSession | null>(null);
+  const [isSearchingSessions, setIsSearchingSessions] = useState(true);
+
+  // Dropdown Logic (Fixed Position)
+  const [showSessionMenu, setShowSessionMenu] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0, width: 0 });
+  const sessionButtonRef = useRef<HTMLButtonElement>(null);
 
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messageText, setMessageText] = useState('');
@@ -38,53 +52,115 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
 
   const [chats, setChats] = useState<EvolutionChat[]>([]);
   const [messages, setMessages] = useState<EvolutionMessage[]>([]);
-  const [loadingChats, setLoadingChats] = useState(true);
+  const [loadingChats, setLoadingChats] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [sessionStatus, setSessionStatus] = useState<'WORKING' | 'SCAN_QR' | 'LOADING'>('LOADING');
+
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const sessionMenuRef = useRef<HTMLDivElement>(null);
   const lastScrollMsgId = useRef<string | null>(null);
 
-  // Maps clean identity (phone or clean ID) to all its associated JIDs in the system
+  // New State for Collapsible Sidebar
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  const jidToIdentity = useRef<Map<string, string>>(new Map());
   const identityToJids = useRef<Map<string, Set<string>>>(new Map());
 
-  // Close emoji picker on click outside
+  // FETCH ALL SESSIONS LOGIC
+  const refreshSessions = useCallback(async () => {
+    try {
+      const res = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
+        headers: { 'apikey': EVOLUTION_API_KEY }
+      });
+      const data = await res.json();
+      const rawInstances = Array.isArray(data) ? data : [];
+
+      // Map to our Interface
+      const sessions: EvolutionSession[] = rawInstances
+        .filter((i: any) => i.connectionStatus === 'open' || i.state === 'open') // Only show connected
+        .map((i: any) => ({
+          instanceName: i.instanceName || i.name || i.instance?.instanceName,
+          ownerJid: i.ownerJid,
+          profilePicUrl: i.profilePictureUrl || i.profilePicUrl || i.instance?.profilePictureUrl,
+          status: 'open'
+        }));
+
+      setAvailableSessions(sessions);
+
+      if (sessions.length > 0) {
+        if (!currentSession || !sessions.find(s => s.instanceName === currentSession.instanceName)) {
+          setCurrentSession(sessions[0]);
+        }
+      } else {
+        setCurrentSession(null);
+      }
+    } catch (e) {
+      console.error('Failed to fetch sessions', e);
+    } finally {
+      setIsSearchingSessions(false);
+    }
+  }, [currentSession]);
+
+  // Initial Load & Polling for Sessions
+  useEffect(() => {
+    refreshSessions();
+    const interval = setInterval(refreshSessions, 20000);
+    return () => clearInterval(interval);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle Dropdown Toggle
+  const toggleSessionMenu = () => {
+    if (showSessionMenu) {
+      setShowSessionMenu(false);
+    } else {
+      if (sessionButtonRef.current) {
+        const rect = sessionButtonRef.current.getBoundingClientRect();
+        setMenuPosition({
+          top: rect.bottom + 8, // 8px Offset
+          left: isRtl ? (rect.right - 280) : rect.left, // Align right for RTL, Left for LTR
+          width: 280
+        });
+        setShowSessionMenu(true);
+      }
+    }
+  };
+
+  // Close menus on click outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      // Emoji Picker
       if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
         setShowEmojiPicker(false);
       }
+      // Session Menu (Fixed Position)
+      if (showSessionMenu && sessionMenuRef.current && !sessionMenuRef.current.contains(event.target as Node) && !sessionButtonRef.current?.contains(event.target as Node)) {
+        setShowSessionMenu(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    // Also update position on scroll to avoid detached menu
+    const handleScroll = () => { if (showSessionMenu) setShowSessionMenu(false); }
+    window.addEventListener('scroll', handleScroll, true);
 
-  const COMMON_EMOJIS = ['😊', '😂', '😘', '🥰', '😍', '😇', '😎', '🤩', '🥳', '🤔', '🤨', '😐', '😑', '😶', '🙄', '😏', '😣', '😥', '😮', '🤐', '😯', '😪', '😫', '🥱', '😴', '😌', '😛', '😜', '😝', '🤤', '😒', '😓', '😔', '😕', '🙃', '🤑', '😲', '☹️', '🙁', '😖', '😞', '😟', '😤', '😢', '😭', '😦', '😧', '😨', '😩', '🤯', '😬', '😰', '😱', '🥵', '🥶', '😳', '🤪', '😵', '🥴', '😠', '😡', '🤬', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '😇', '🥳', '🥺', '🤠', '🤡', '🤥', '🤫', '🤭', '🧐', '🤓', '😈', '👿', '👹', '👺', '💀', '👻', '👽', '🤖', '💩', '😺', '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾', '👋', '🤚', '🖐', '✋', '🖖', '👌', '🤌', '🤏', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '🙏', '✍️', '💅', '🤳', '💪', '🦾', '🦵', '🦿', '🦶', '👣', '👂', '🦻', '👃', '🧠', '🫀', '🫁', '🦷', '🦴', '👀', '👁', '👅', '👄', '💋', '🩸'];
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [showSessionMenu]);
 
-  const fetchSessionStatus = useCallback(async () => {
-    try {
-      const response = await fetch(`${EVOLUTION_URL}/instance/fetchInstances?instanceName=${SESSION_NAME}`, {
-        headers: { 'apikey': EVOLUTION_API_KEY }
-      });
-      const data = await response.json();
-      const instances = Array.isArray(data) ? data : (data.value || []);
-      const inst = instances.find((i: any) => i.instanceName === SESSION_NAME || i.name === SESSION_NAME);
+  const COMMON_EMOJIS = ['😊', '😂', '😘', '🥰', '😍', '😇', '😎', '🤩', '🥳', '🤔', '🤨', '😐', '😑', '😶', '🙄', '😏', '😣', '😥', '😮', '🤐', '😯', '😪', '😫', '🥱', '😴', '😌', '😛', '😜', '😜', '😝', '🤤', '😒', '😓', '😔', '😕', '🙃', '🤑', '😲', '☹️', '🙁', '😖', '😞', '😟', '😤', '😢', '😭', '😦', '😧', '😨', '😩', '🤯', '😬', '😰', '😱', '🥵', '🥶', '😳', '🤪', '😵', '🥴', '😠', '😡', '🤬', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '😇', '🥳', '🥺', '🤠', '🤡', '🤥', '🤫', '🤭', '🧐', '🤓', '😈', '👿', '👹', '👺', '💀', '👻', '👽', '🤖', '💩', '😺', '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾', '👋', '🤚', '🖐', '✋', '🖖', '👌', '🤌', '🤏', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '🙏', '✍️', '💅', '🤳', '💪', '🦾', '🦵', '🦿', '🦶', '👣', '👂', '🦻', '👃', '🧠', '🫀', '🫁', '🦷', '🦴', '👀', '👁', '👅', '👄', '💋', '🩸'];
 
-      const state = inst?.connectionStatus || inst?.state || 'close';
-      setSessionStatus(state.toLowerCase() === 'open' ? 'WORKING' : 'SCAN_QR');
-    } catch (err) {
-      setSessionStatus('SCAN_QR');
-    }
-  }, [SESSION_NAME]);
-
-  // Maps EVERY JID/LID to a consolidated Master Identity Key
-  const jidToIdentity = useRef<Map<string, string>>(new Map());
-
+  // FETCH CHATS FOR CURRENT SESSION
   const fetchChats = useCallback(async (isManualSync = false) => {
+    if (!currentSession) return;
+    const sessionName = currentSession.instanceName;
+
     if (isManualSync) setSyncing(true);
+    else if (!isManualSync && chats.length === 0) setLoadingChats(true);
+
     try {
-      const response = await fetch(`${EVOLUTION_URL}/chat/findChats/${SESSION_NAME}`, {
+      const response = await fetch(`${EVOLUTION_URL}/chat/findChats/${sessionName}`, {
         method: 'POST',
         headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
         body: JSON.stringify({})
@@ -93,7 +169,6 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
       const data = await response.json();
       const rawChats = Array.isArray(data) ? data : (data.records || data.data || []);
 
-      // 1. First Pass: Extract and Normalize all possible identities
       const processed = rawChats.map((c: any) => {
         const fullJid = (c.remoteJid || c.id || '').toLowerCase().trim();
         const [idPart, domain] = fullJid.split('@');
@@ -103,7 +178,6 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
         const pushName = c.pushName || c.name || '';
         const profilePic = c.profilePicUrl || null;
 
-        // Try to find phone in name if not in JID
         if (!phone && pushName) {
           const digits = pushName.replace(/\D/g, '');
           if (digits.length >= 10 && digits.length <= 15) phone = digits;
@@ -112,11 +186,9 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
         return { ...c, fullJid, cleanIdPart, domain, phone, pushName, profilePic, timestamp: Math.max(c.lastMessage?.messageTimestamp || 0, c.updatedAt ? Math.floor(new Date(c.updatedAt).getTime() / 1000) : 0, c.timestamp || 0) };
       }).filter((c: any) => c.fullJid && !c.fullJid.includes('@status') && !c.fullJid.includes('@broadcast'));
 
-      // 2. Second Pass: Link fragments together
       const newJidToId = new Map<string, string>();
       const masterMap = new Map<string, any>();
 
-      // Priority 1: Link by Phone Number
       processed.forEach(c => {
         if (c.phone) {
           const masterKey = `phone:${c.phone}`;
@@ -127,7 +199,6 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
         }
       });
 
-      // Priority 2: Link by Profile Picture (if not already linked)
       processed.forEach(c => {
         if (!newJidToId.has(c.fullJid) && c.profilePic) {
           const masterKey = `pic:${c.profilePic}`;
@@ -138,7 +209,6 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
         }
       });
 
-      // Priority 3: Group by Clean ID/Name (Fallback)
       processed.forEach(c => {
         if (!newJidToId.has(c.fullJid)) {
           const masterKey = `jid:${c.cleanIdPart}`;
@@ -147,7 +217,6 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
         }
       });
 
-      // 3. Third Pass: Consolidate metadata (sum unreads, keep all JIDs for history)
       const consolidatedChats: EvolutionChat[] = [];
       const identityToAllJids = new Map<string, Set<string>>();
 
@@ -159,14 +228,13 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
         const totalUnread = linkedRaw.reduce((sum, p) => sum + (p.unreadCount || 0), 0);
         const latestInfo = linkedRaw.sort((a, b) => b.timestamp - a.timestamp)[0];
 
-        // Format name properly
         let finalName = latestInfo.pushName || latestInfo.cleanIdPart;
         if (latestInfo.phone && (!finalName || finalName === latestInfo.cleanIdPart)) {
           finalName = `+${latestInfo.phone}`;
         }
 
         consolidatedChats.push({
-          id: latestInfo.fullJid, // This is the primary ID for sending
+          id: latestInfo.fullJid,
           name: finalName,
           unreadCount: totalUnread,
           timestamp: latestInfo.timestamp,
@@ -184,7 +252,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
       setLoadingChats(false);
       setSyncing(false);
     }
-  }, [SESSION_NAME]);
+  }, [currentSession]);
 
   const getMessageBody = (m: any): string => {
     const msgContent = m.message || m;
@@ -199,6 +267,9 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
   };
 
   const fetchMessages = useCallback(async (primaryChatId: string, isPolling = false) => {
+    if (!currentSession) return;
+    const sessionName = currentSession.instanceName;
+
     const identityKey = jidToIdentity.current.get(primaryChatId.toLowerCase().trim());
     const allJids = Array.from(identityToJids.current.get(identityKey || '') || [primaryChatId]);
 
@@ -210,7 +281,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
 
     try {
       const results = await Promise.all(allJids.map(jid =>
-        fetch(`${EVOLUTION_URL}/chat/findMessages/${SESSION_NAME}`, {
+        fetch(`${EVOLUTION_URL}/chat/findMessages/${sessionName}`, {
           method: 'POST',
           headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
           body: JSON.stringify({ where: { remoteJid: jid }, limit: 50 })
@@ -252,27 +323,31 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     } finally {
       if (!isPolling && currentChatIdRef.current === primaryChatId) setLoadingMessages(false);
     }
-  }, [SESSION_NAME]);
+  }, [currentSession]);
 
   useEffect(() => {
-    fetchSessionStatus();
-    fetchChats();
-    const chatInterval = setInterval(fetchChats, 7000);
-    const sessionInterval = setInterval(fetchSessionStatus, 15000);
-    return () => {
-      clearInterval(chatInterval);
-      clearInterval(sessionInterval);
-    };
-  }, [fetchChats, fetchSessionStatus]);
+    setChats([]);
+    setMessages([]);
+    setSelectedChatId(null);
+    if (currentSession) {
+      fetchChats();
+    }
+  }, [currentSession, fetchChats]);
 
   useEffect(() => {
-    if (selectedChatId) {
+    if (!currentSession) return;
+    const chatInterval = setInterval(() => fetchChats(false), 8000);
+    return () => clearInterval(chatInterval);
+  }, [currentSession, fetchChats]);
+
+  useEffect(() => {
+    if (selectedChatId && currentSession) {
       setMessageText('');
       fetchMessages(selectedChatId);
       const msgInterval = setInterval(() => fetchMessages(selectedChatId, true), 5000);
       return () => clearInterval(msgInterval);
     }
-  }, [selectedChatId, fetchMessages]);
+  }, [selectedChatId, fetchMessages, currentSession]);
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -292,6 +367,8 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (!currentSession) return;
+
     const targetChatId = selectedChatId;
     if (!messageText.trim() || !targetChatId) return;
 
@@ -299,7 +376,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     setMessageText('');
 
     try {
-      const response = await fetch(`${EVOLUTION_URL}/message/sendText/${SESSION_NAME}`, {
+      const response = await fetch(`${EVOLUTION_URL}/message/sendText/${currentSession.instanceName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -313,9 +390,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        let errMsg = errorData.message || errorData.error || 'Unknown Error';
-        throw new Error(errMsg);
+        throw new Error('Failed to send message');
       }
 
       const data = await response.json();
@@ -346,114 +421,369 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     return new Date(timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Custom Scrollbar Styles
+  const scrollbarStyles = `
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background-color: #cbd5e1;
+      border-radius: 20px;
+    }
+    .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+      background-color: #334155;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background-color: #94a3b8;
+    }
+  `;
+
   return (
-    <div className="h-[calc(100vh-80px)] flex flex-col bg-white dark:bg-[#020617] overflow-hidden relative page-enter">
-      {sessionStatus === 'SCAN_QR' && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/50 p-3 px-6 flex items-center justify-between">
-          <div className="flex items-center gap-3 text-amber-800 dark:text-amber-400 text-xs font-bold">
-            <AlertCircle className="w-4 h-4" />
-            <p>{isRtl ? 'اتصال واتساب مقطوع! يرجى إعادة ربط الحساب للتمكن من الإرسال.' : 'WhatsApp disconnected! Please re-link your account to send messages.'}</p>
+    <>
+      <div className="h-[calc(100vh-80px)] flex flex-col bg-transparent overflow-hidden relative page-enter p-2 md:p-6 gap-4 md:gap-6">
+        <style>{scrollbarStyles}</style>
+
+        {/* Connection State Alerts */}
+        {!isSearchingSessions && availableSessions.length === 0 && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/50 p-4 rounded-2xl flex items-center justify-between shadow-sm animate-in fade-in slide-in-from-top-4">
+            <div className="flex items-center gap-3 text-red-700 dark:text-red-400 text-sm font-bold">
+              <div className="p-2 bg-red-100 dark:bg-red-900/40 rounded-full animate-pulse"><AlertCircle className="w-4 h-4" /></div>
+              <p>{isRtl ? 'لا توجد أرقام متصلة! يرجى ربط حساب واتساب للبدء.' : 'No numbers connected! Please link a WhatsApp account to start.'}</p>
+            </div>
+            <button
+              onClick={() => window.location.hash = '#connection'}
+              className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-red-500/20 hover:bg-red-700 hover:-translate-y-0.5 transition-all"
+            >
+              {isRtl ? 'ربط حساب' : 'Connect Account'}
+            </button>
+          </div>
+        )}
+
+        {isSearchingSessions && availableSessions.length === 0 && (
+          <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-900/50 p-4 rounded-2xl flex items-center justify-between shadow-sm animate-in fade-in">
+            <div className="flex items-center gap-3 text-emerald-700 dark:text-emerald-400 text-sm font-bold">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <p>{isRtl ? 'جاري البحث عن جلسات واتساب نشطة...' : 'Searching for active WhatsApp sessions...'}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative gap-6">
+
+          {/* Sidebar List */}
+          <div className={`flex flex-col h-full bg-white dark:bg-slate-900 md:rounded-[2.5rem] rounded-2xl border border-slate-100 dark:border-white/5 shadow-xl shadow-slate-200/50 dark:shadow-black/20 transition-all duration-300 ease-in-out relative z-10 
+            ${isSidebarCollapsed ? 'w-[96px] md:w-[96px]' : 'w-full md:w-[380px]'} 
+            ${selectedChatId !== null ? 'hidden md:flex' : 'flex'}`
+          }>
+
+            <div className="p-4 md:p-6 pb-2 relative z-20">
+
+              {/* Header: Title & Session Switcher */}
+              <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-4' : 'justify-between'} mb-4 md:mb-6`}>
+
+                {!isSidebarCollapsed && (
+                  <div className="relative">
+                    <button
+                      ref={sessionButtonRef}
+                      onClick={() => availableSessions.length > 1 && toggleSessionMenu()}
+                      className={`flex items-center gap-2 group ${availableSessions.length > 1 ? 'cursor-pointer' : 'cursor-default'}`}
+                    >
+                      <h2 className="text-xl font-[900] tracking-tight text-slate-900 dark:text-white truncate flex items-center gap-2">
+                        {/* Current User Avatar in Header */}
+                        {currentSession?.profilePicUrl && (
+                          <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700">
+                            <img src={currentSession.profilePicUrl} className="w-full h-full object-cover" />
+                          </div>
+                        )}
+                        <span>{currentSession?.instanceName || (isRtl ? 'الرسائل' : 'Inbox')}</span>
+                        {availableSessions.length > 1 && <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform duration-300 ${showSessionMenu ? 'rotate-180' : ''}`} />}
+                      </h2>
+                    </button>
+                    {/* Menu rendered outside via Portal/Fixed logic */}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                    className="hidden md:flex p-2 bg-slate-50 dark:bg-slate-800 rounded-xl text-slate-400 hover:text-emerald-500 transition-colors"
+                    title={isRtl ? 'تصغير/توسيع القائمة' : 'Toggle Sidebar'}
+                  >
+                    {isSidebarCollapsed ? (isRtl ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />) : (isRtl ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />)}
+                  </button>
+
+                  {!isSidebarCollapsed && (
+                    <>
+                      <button onClick={() => fetchChats(true)} disabled={syncing} className={`p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all ${syncing ? 'animate-spin text-emerald-500' : 'text-slate-400'}`}>
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Current Session Indicator (Collapsed Mode) */}
+              {isSidebarCollapsed && currentSession && (
+                <div className="mb-4 flex justify-center">
+                  <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-600 border-2 border-white dark:border-slate-800 shadow-sm" title={currentSession.instanceName}>
+                    {currentSession.profilePicUrl ? <img src={currentSession.profilePicUrl} className="w-full h-full object-cover rounded-full" /> : <span className="font-bold text-xs">{currentSession.instanceName.substring(0, 2).toUpperCase()}</span>}
+                  </div>
+                </div>
+              )}
+
+              {/* Search Input */}
+              <div className="relative group">
+                {isSidebarCollapsed ? (
+                  <button className="w-full aspect-square flex items-center justify-center bg-slate-50 dark:bg-slate-800 rounded-2xl text-slate-400 hover:text-emerald-500 transition-all">
+                    <Search className="w-5 h-5" />
+                  </button>
+                ) : (
+                  <>
+                    <Search className={`absolute ${isRtl ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-emerald-500 transition-colors`} />
+                    <input
+                      type="text"
+                      placeholder={isRtl ? 'بحث...' : 'Search...'}
+                      className={`w-full ${isRtl ? 'pr-11 pl-4' : 'pl-11 pr-4'} py-3.5 bg-slate-50 dark:bg-slate-800/50 border-none rounded-2xl text-sm font-bold focus:bg-white dark:focus:bg-slate-800 focus:ring-2 focus:ring-emerald-500/20 transition-all shadow-inner`}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar px-3 pb-6 space-y-2 mt-2 z-0 relative">
+              {loadingChats ? (
+                <div className="flex flex-col items-center justify-center p-12 gap-4">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+                  {!isSidebarCollapsed && <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{isRtl ? 'جاري التحميل...' : 'Syncing...'}</p>}
+                </div>
+              ) : chats.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-12 text-center opacity-60">
+                  <MessageSquare className="w-8 h-8 text-slate-300 mb-4" />
+                  {!isSidebarCollapsed && <p className="text-sm font-bold text-slate-400">{isRtl ? 'لا توجد محادثات' : 'No active chats'}</p>}
+                </div>
+              ) : chats.map((chat) => (
+                <button
+                  key={chat.id}
+                  onClick={() => setSelectedChatId(chat.id)}
+                  className={`w-full flex items-center gap-4 px-3 py-3 rounded-[1.2rem] transition-all duration-300 group relative ${selectedChatId === chat.id
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-lg shadow-emerald-500/30'
+                    : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300'
+                    } ${isSidebarCollapsed ? 'justify-center' : ''}`}
+                  title={isSidebarCollapsed ? chat.name : ''}
+                >
+                  <div className="relative flex-shrink-0">
+                    <div className={`w-12 h-12 rounded-[1rem] flex items-center justify-center overflow-hidden border-2 transition-all ${selectedChatId === chat.id
+                      ? 'border-white/30 bg-white/20'
+                      : 'border-slate-100 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 group-hover:scale-105 group-hover:shadow-md'
+                      }`}>
+                      {chat.profilePicUrl ? (
+                        <img src={chat.profilePicUrl} alt={chat.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <UserIcon className={`w-6 h-6 ${selectedChatId === chat.id ? 'text-white' : 'text-slate-400'}`} />
+                      )}
+                    </div>
+                    {chat.unreadCount > 0 && (
+                      <div className={`absolute -top-1 -right-1 flex items-center justify-center bg-red-500 text-white rounded-full border-2 border-white dark:border-slate-900 font-black shadow-sm transform scale-100 animate-pulse ${isSidebarCollapsed || selectedChatId !== chat.id ? 'w-5 h-5 text-[10px]' : 'w-5 h-5 text-[10px]'
+                        }`}>
+                        {chat.unreadCount}
+                      </div>
+                    )}
+                  </div>
+
+                  {!isSidebarCollapsed && (
+                    <div className="flex-1 text-left min-w-0 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex justify-between items-center mb-0.5">
+                        <h4 className={`font-bold text-sm truncate ${selectedChatId === chat.id ? 'text-white' : 'text-slate-900 dark:text-white'}`}>{chat.name}</h4>
+                        <span className={`text-[10px] font-bold ${selectedChatId === chat.id ? 'text-emerald-100' : 'text-slate-400'}`}>{formatTime(chat.timestamp)}</span>
+                      </div>
+                      <p className={`text-xs truncate font-medium ${selectedChatId === chat.id ? 'text-emerald-50' : 'text-slate-500 dark:text-slate-500 group-hover:text-slate-600'}`}>
+                        {typeof chat.lastMessage === 'string' ? chat.lastMessage : (chat.lastMessage?.message?.conversation || chat.lastMessage?.body || chat.lastMessage?.text || (isRtl ? 'رسالة وسائط' : 'Media message'))}
+                      </p>
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Chat Area - Floating Card Style */}
+          <div className={`flex-1 flex flex-col h-full bg-white dark:bg-slate-900 md:rounded-[2.5rem] rounded-2xl border border-slate-100 dark:border-white/5 shadow-xl shadow-slate-200/50 dark:shadow-black/20 overflow-hidden relative transition-all duration-300 ${selectedChatId === null ? 'hidden md:flex' : 'flex'}`}>
+            {selectedChatId !== null && selectedChat ? (
+              <>
+                {/* Chat Header */}
+                <div className="h-20 md:h-24 px-4 md:px-8 flex items-center justify-between bg-white dark:bg-slate-900 z-20 relative via-slate-50 to-white">
+                  <div className="flex items-center gap-3 md:gap-4 flex-1 min-w-0">
+                    {/* Back Button for Mobile */}
+                    <button
+                      onClick={() => setSelectedChatId(null)}
+                      className="md:hidden p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+                    >
+                      {isRtl ? <ArrowLeft className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+                    </button>
+
+                    <div className="relative flex-shrink-0">
+                      <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-gradient-to-tr from-slate-100 to-slate-50 dark:from-slate-800 dark:to-slate-700 flex items-center justify-center border border-slate-100 dark:border-white/5 overflow-hidden">
+                        {selectedChat.profilePicUrl ? <img src={selectedChat.profilePicUrl} className="w-full h-full object-cover" /> : <UserIcon className="w-6 h-6 text-slate-400" />}
+                      </div>
+                      <div className="absolute -bottom-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full"></div>
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-[800] text-base md:text-lg text-slate-900 dark:text-white leading-tight truncate">{selectedChat.name}</h3>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-md">Online</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 md:gap-2">
+                    <button className="p-2 md:p-3 bg-slate-50 dark:bg-slate-800 rounded-xl text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all"><Phone className="w-4 h-4" /></button>
+                    <button className="hidden md:flex p-3 bg-slate-50 dark:bg-slate-800 rounded-xl text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all"><Video className="w-4 h-4" /></button>
+                    <div className="hidden md:block w-px h-8 bg-slate-100 dark:bg-slate-800 mx-1"></div>
+                    <button className="p-2 md:p-3 bg-slate-50 dark:bg-slate-800 rounded-xl text-slate-400 hover:text-slate-900 transition-all"><Search className="w-4 h-4" /></button>
+                  </div>
+                </div>
+
+                {/* Messages Area */}
+                <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar p-4 md:p-8 space-y-4 md:space-y-6 bg-slate-50/50 dark:bg-[#0B1120] relative scroll-smooth">
+                  {/* Background Pattern */}
+                  <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
+
+                  {loadingMessages ? (
+                    <div className="flex flex-col items-center justify-center p-20 gap-4">
+                      <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">تحميل الرسائل...</span>
+                    </div>
+                  ) : messages.map((msg, idx) => (
+                    <div key={msg.id} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'} group animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+                      <div className={`max-w-[85%] md:max-w-[70%] flex flex-col ${msg.fromMe ? 'items-end' : 'items-start'}`}>
+                        <div className={`px-5 py-3 md:px-6 md:py-4 rounded-[1.5rem] text-[13px] font-medium leading-relaxed shadow-sm relative transition-all duration-300 ${msg.fromMe
+                          ? 'bg-gradient-to-br from-slate-900 to-slate-800 dark:from-emerald-600 dark:to-teal-600 text-white rounded-tr-sm shadow-slate-200 dark:shadow-emerald-900/20'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-tl-sm shadow-sm border border-slate-100 dark:border-slate-700'
+                          }`}>
+                          {msg.body}
+                        </div>
+                        <div className={`flex items-center gap-2 mt-2 px-1 opacity-60 group-hover:opacity-100 transition-opacity ${msg.fromMe ? 'flex-row-reverse' : ''}`}>
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{formatTime(msg.timestamp)}</span>
+                          {msg.fromMe && <CheckCheck className="w-3.5 h-3.5 text-emerald-500" />}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Input Area */}
+                <div className="p-4 md:p-6 bg-white dark:bg-slate-900 z-20">
+                  <form onSubmit={handleSendMessage} className="flex items-center gap-2 md:gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-[2rem] p-1.5 md:p-2 pr-2 border border-slate-100 dark:border-slate-800 transition-all focus-within:ring-2 focus-within:ring-emerald-500/20 focus-within:bg-white dark:focus-within:bg-slate-800 shadow-sm hover:shadow-md">
+                    <div className="relative" ref={emojiPickerRef}>
+                      <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 md:p-3 rounded-full transition-colors ${showEmojiPicker ? 'bg-amber-100 text-amber-500' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
+                        <Smile className="w-5 h-5" />
+                      </button>
+                      {showEmojiPicker && (
+                        <div className={`absolute bottom-full ${isRtl ? 'right-0' : 'left-0'} mb-4 p-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-white/10 rounded-[2rem] shadow-2xl z-50 w-72 h-80 overflow-y-auto animate-in zoom-in duration-200`}>
+                          <div className="grid grid-cols-6 gap-2">
+                            {COMMON_EMOJIS.map((emoji, idx) => (
+                              <button key={idx} type="button" onClick={() => setMessageText(prev => prev + emoji)} className="text-xl p-2 hover:bg-slate-50 dark:hover:bg-white/5 rounded-xl transition-all hover:scale-125 hover:shadow-sm">{emoji}</button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <button type="button" className="hidden md:block p-3 rounded-full text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+                      <Paperclip className="w-5 h-5" />
+                    </button>
+
+                    <input
+                      type="text"
+                      value={messageText}
+                      onChange={(e) => setMessageText(e.target.value)}
+                      placeholder={isRtl ? 'اكتب رسالتك...' : 'Type message...'}
+                      className="flex-1 bg-transparent border-none py-3 px-2 text-sm focus:ring-0 outline-none text-slate-900 dark:text-white font-medium placeholder:text-slate-400 placeholder:font-normal"
+                    />
+
+                    <button type="submit" disabled={!messageText.trim()} className={`p-2 md:p-3.5 rounded-full transition-all duration-300 transform ${messageText.trim() ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-lg shadow-emerald-500/30 hover:scale-105 hover:shadow-emerald-500/40' : 'bg-slate-200 text-slate-400 dark:bg-slate-700'}`}>
+                      <Send className="w-4 h-4 ml-0.5" />
+                    </button>
+                  </form>
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-12 text-center relative overflow-hidden">
+                {/* Decorative Background */}
+                <div className="absolute inset-0 bg-slate-50/50 dark:bg-slate-900 opacity-50" style={{ backgroundImage: 'radial-gradient(#e2e8f0 1px, transparent 1px)', backgroundSize: '32px 32px' }}></div>
+
+                <div className="relative z-10 bg-white dark:bg-slate-800 p-12 rounded-[3rem] shadow-2xl shadow-slate-200/50 dark:shadow-black/20 border border-slate-100 dark:border-white/5 max-w-sm">
+                  <div className="w-24 h-24 bg-emerald-50 dark:bg-emerald-900/20 rounded-3xl flex items-center justify-center mb-8 mx-auto border-4 border-emerald-100 dark:border-emerald-500/10">
+                    <MessageSquare className="w-10 h-10 text-emerald-500" />
+                  </div>
+                  <h3 className="text-xl font-[900] uppercase tracking-tight text-slate-900 dark:text-white mb-3">
+                    {isRtl ? 'صندوق الوارد' : 'Select a Conversation'}
+                  </h3>
+                  <p className="text-slate-400 text-sm font-medium leading-relaxed mb-8">
+                    {currentSession
+                      ? (isRtl ? `أنت تستخدم الرقم ${currentSession.instanceName}` : `Connected as ${currentSession.instanceName}`)
+                      : (isRtl ? 'اختر محادثة من القائمة الجانبية للبدء في المراسلة الفورية مع عملائك.' : 'Choose a conversation from the sidebar to start chatting with your customers in real-time.')
+                    }
+                  </p>
+                  <div className="flex justify-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600"></div>
+                    <div className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600"></div>
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      )}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        <div className={`w-full md:w-80 lg:w-[340px] border-r border-slate-50 dark:border-white/5 flex flex-col h-full bg-white dark:bg-[#0F172A] ${selectedChatId !== null ? 'hidden md:flex' : 'flex'}`}>
-          <div className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-[11px] font-[900] uppercase tracking-[0.2em] dark:text-white">{isRtl ? 'المحادثات' : 'Inbox'}</h2>
-              <button onClick={() => fetchChats(true)} disabled={syncing} className={`p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-white/5 transition-all ${syncing ? 'animate-spin text-emerald-500' : 'text-slate-400'}`}>
-                <RefreshCw className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="relative">
-              <Search className={`absolute ${isRtl ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300`} />
-              <input type="text" placeholder={isRtl ? 'بحث...' : 'Search messages...'} className={`w-full ${isRtl ? 'pr-10' : 'pl-10'} py-2.5 bg-slate-50 dark:bg-slate-900 border-none rounded-xl text-xs font-bold focus:bg-white focus:ring-2 focus:ring-slate-100 transition-all`} />
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto scrollbar-hide px-3 pb-6 space-y-0.5">
-            {loadingChats ? (
-              <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-emerald-500" /></div>
-            ) : chats.length === 0 ? (
-              <p className="text-center text-xs text-slate-400 p-8">{isRtl ? 'لا توجد محادثات نشطة' : 'No active chats found'}</p>
-            ) : chats.map((chat) => (
-              <button key={chat.id} onClick={() => setSelectedChatId(chat.id)} className={`w-full flex items-center gap-4 px-4 py-4 rounded-2xl transition-all ${selectedChatId === chat.id ? 'bg-slate-950 text-white dark:bg-emerald-600 shadow-xl' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>
-                <div className="relative flex-shrink-0">
-                  <div className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden">
-                    {chat.profilePicUrl ? <img src={chat.profilePicUrl} alt={chat.name} className="w-full h-full object-cover" /> : <UserIcon className={`w-6 h-6 ${selectedChatId === chat.id ? 'text-white/60' : 'text-slate-400'}`} />}
+      </div>
+
+      {/* GLOBAL DROPDOWN MENU (Fixed Position outside main container) */}
+      {showSessionMenu && availableSessions.length > 1 && (
+        <div
+          ref={sessionMenuRef}
+          style={{
+            position: 'fixed',
+            top: menuPosition.top,
+            left: menuPosition.left,
+            width: menuPosition.width,
+            zIndex: 9999
+          }}
+          className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-100 dark:border-white/10 animate-in zoom-in-95 duration-200 overflow-hidden"
+        >
+          <div className="p-2">
+            <p className="text-xs font-bold text-slate-400 px-3 py-2 uppercase tracking-wider">{isRtl ? 'تبديل الحساب' : 'Switch Account'}</p>
+            {availableSessions.map(session => (
+              <button
+                key={session.instanceName}
+                onClick={() => {
+                  setCurrentSession(session);
+                  setShowSessionMenu(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${currentSession?.instanceName === session.instanceName ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' : 'hover:bg-slate-50 dark:hover:bg-white/5 text-slate-700 dark:text-slate-200'}`}
+              >
+                <div className="relative">
+                  <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center overflow-hidden border-2 border-transparent hover:border-emerald-500 transition-colors">
+                    {session.profilePicUrl ? <img src={session.profilePicUrl} className="w-full h-full object-cover" /> : <Smartphone className="w-5 h-5" />}
                   </div>
-                  {chat.unreadCount > 0 && selectedChatId !== chat.id && <div className="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-black text-white">{chat.unreadCount}</div>}
+                  {currentSession?.instanceName === session.instanceName && (
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-slate-800 rounded-full"></div>
+                  )}
                 </div>
-                <div className="flex-1 text-left min-w-0">
-                  <div className="flex justify-between items-baseline">
-                    <h4 className={`font-bold text-[13px] truncate ${selectedChatId === chat.id ? 'text-white' : 'dark:text-white'}`}>{chat.name}</h4>
-                    <span className={`text-[9px] font-bold ${selectedChatId === chat.id ? 'text-white/60' : 'text-slate-300'}`}>{formatTime(chat.timestamp)}</span>
-                  </div>
-                  <p className={`text-[11px] truncate mt-0.5 ${selectedChatId === chat.id ? 'text-white/60' : 'text-slate-400 dark:text-slate-400'}`}>
-                    {typeof chat.lastMessage === 'string' ? chat.lastMessage : (chat.lastMessage?.message?.conversation || chat.lastMessage?.body || chat.lastMessage?.text || (isRtl ? 'رسالة وسائط' : 'Media message'))}
-                  </p>
+                <div className="flex flex-col items-start min-w-0">
+                  <span className="font-bold text-sm truncate max-w-[140px]">{session.instanceName}</span>
+                  <span className="text-[10px] text-slate-400">{session.status === 'open' ? 'Online' : 'Offline'}</span>
                 </div>
+                {currentSession?.instanceName === session.instanceName && <CheckCheck className="w-4 h-4 ml-auto text-emerald-500" />}
               </button>
             ))}
           </div>
         </div>
-
-        <div className={`flex-1 flex flex-col h-full bg-white dark:bg-[#020617] ${selectedChatId === null ? 'hidden md:flex' : 'flex'}`}>
-          {selectedChatId !== null && selectedChat ? (
-            <>
-              <div className="h-20 border-b border-slate-50 dark:border-white/5 px-8 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <button onClick={() => setSelectedChatId(null)} className="md:hidden p-2 -ml-2 rounded-xl bg-slate-50">{isRtl ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}</button>
-                  <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center border border-slate-100 dark:border-white/5"><UserIcon className="w-5 h-5 text-slate-400" /></div>
-                  <div>
-                    <h3 className="font-black text-sm dark:text-white leading-none tracking-tight">{selectedChat.name}</h3>
-                    <div className="flex items-center gap-1.5 mt-1.5"><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div><span className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Active now</span></div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button className="p-2.5 text-slate-300 hover:text-slate-600 transition-colors"><Search className="w-4 h-4" /></button>
-                  <button className="p-2.5 text-slate-300 hover:text-slate-600 transition-colors"><MoreVertical className="w-4 h-4" /></button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-10 space-y-8 bg-white dark:bg-transparent">
-                {loadingMessages ? (
-                  <div className="flex justify-center p-20"><Loader2 className="w-8 h-8 animate-spin text-emerald-500" /></div>
-                ) : messages.map((msg) => (
-                  <div key={msg.id} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[75%] flex flex-col ${msg.fromMe ? 'items-end' : 'items-start'}`}>
-                      <div className={`px-5 py-3.5 rounded-2xl text-[13px] font-bold leading-relaxed shadow-sm ${msg.fromMe ? 'bg-slate-950 text-white dark:bg-emerald-600 rounded-tr-none' : 'bg-slate-50 dark:bg-[#0F172A] text-slate-800 dark:text-slate-100 rounded-tl-none'}`}>{msg.body}</div>
-                      <div className={`flex items-center gap-2 mt-2.5 ${msg.fromMe ? 'flex-row-reverse' : ''}`}><span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">{formatTime(msg.timestamp)}</span>{msg.fromMe && <CheckCheck className="w-3.5 h-3.5 text-emerald-500" />}</div>
-                    </div>
-                  </div>
-                ))}
-                <div ref={chatEndRef} />
-              </div>
-
-              <div className="p-8 bg-white dark:bg-[#020617] border-t border-slate-50 dark:border-white/5">
-                <form onSubmit={handleSendMessage} className="flex items-center gap-3 bg-slate-50 dark:bg-slate-900 rounded-[1.5rem] px-5 py-2 transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-slate-100 border border-transparent focus-within:border-slate-100">
-                  <div className="relative" ref={emojiPickerRef}>
-                    <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 transition-colors ${showEmojiPicker ? 'text-emerald-500' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'}`}><Smile className="w-6 h-6" /></button>
-                    {showEmojiPicker && (
-                      <div className={`absolute bottom-full ${isRtl ? 'right-0' : 'left-0'} mb-4 p-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-white/10 rounded-2xl shadow-2xl z-50 w-72 h-80 overflow-y-auto page-enter`}>
-                        <div className="grid grid-cols-6 gap-2">{COMMON_EMOJIS.map((emoji, idx) => (<button key={idx} type="button" onClick={() => setMessageText(prev => prev + emoji)} className="text-xl p-2 hover:bg-slate-50 dark:hover:bg-white/5 rounded-xl transition-all hover:scale-125">{emoji}</button>))}</div>
-                      </div>
-                    )}
-                  </div>
-                  <input type="text" value={messageText} onChange={(e) => setMessageText(e.target.value)} placeholder={isRtl ? 'اكتب رسالة...' : 'Type a message...'} className="flex-1 bg-white dark:bg-slate-800 border-none py-3 px-4 rounded-xl text-sm focus:ring-0 outline-none text-slate-900 dark:text-white font-bold placeholder:text-slate-400 shadow-inner" />
-                  <button type="submit" disabled={!messageText.trim()} className={`p-3 rounded-2xl transition-all ${messageText.trim() ? 'bg-slate-950 text-white dark:bg-emerald-600 shadow-xl' : 'text-slate-200'}`}><Send className="w-5 h-5" /></button>
-                </form>
-              </div>
-            </>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white dark:bg-transparent">
-              <div className="w-20 h-20 bg-slate-50 dark:bg-slate-900 rounded-[2.5rem] flex items-center justify-center mb-8 border border-slate-100 dark:border-white/5"><MessageSquare className="w-7 h-7 text-slate-300" /></div>
-              <h3 className="text-xs font-black uppercase tracking-[0.3em] dark:text-white mb-3">{isRtl ? 'اختر محادثة' : 'Select Thread'}</h3>
-              <p className="text-slate-400 text-[11px] max-w-[220px] font-bold leading-relaxed">Open a conversation to start chatting with your customers in real-time.</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      )}
+    </>
   );
 };
 

@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String    @id @default(uuid())
+  name              String
+  email             String    @unique
+  passwordHash      String
+  emailVerified     Boolean   @default(false)
+  verificationToken String?
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+  subscriptionPlan  String    @default("free")
+  subscriptionExpiry DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  sessions          Session[]
+  contacts          Contact[]
+  campaigns         Campaign[]
+}
+
+model Session {
+  id                String   @id @default(uuid())
+  userId            String
+  whatsappSessionId String   @unique
+  phoneNumber       String?
+  qrCode            String?
+  status            String   @default("disconnected")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages          Message[]
+}
+
+model Message {
+  id           String   @id @default(uuid())
+  sessionId    String
+  contactPhone String
+  contactName  String?
+  messageText  String?
+  messageType  String
+  direction    String
+  status       String
+  timestamp    DateTime @default(now())
+  
+  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model Contact {
+  id        String   @id @default(uuid())
+  userId    String
+  phone     String
+  name      String?
+  email     String?
+  tags      String[]
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, phone])
+}
+
+model Campaign {
+  id              String    @id @default(uuid())
+  userId          String
+  name            String
+  messageTemplate String
+  status          String    @default("draft")
+  scheduledAt     DateTime?
+  totalRecipients Int       @default(0)
+  sentCount       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

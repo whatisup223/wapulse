@@ -1,498 +1,456 @@
-
-import React, { useState, useEffect, useCallback } from 'react';
-import { QrCode, Smartphone, CheckCircle, AlertCircle, RefreshCw, LogOut, Loader2, Plus, Trash2, User } from 'lucide-react';
-import { EvolutionSession } from '../types';
+import React, { useState, useEffect } from 'react';
+import {
+  RefreshCw,
+  Plus,
+  Smartphone,
+  Trash2,
+  Server,
+  CheckCircle,
+  Battery,
+  Signal,
+  QrCode,
+  Settings,
+  Lightbulb,
+  Wifi,
+  WifiOff,
+  LogOut,
+  AlertCircle
+} from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface ConnectionProps {
   language: 'en' | 'ar';
   userId: string;
-  sessions: string[];
-  onAddSession: () => void;
-  onSwitchSession: (id: string) => void;
-  onRemoveSession: (id: string) => void;
-  onSessionReset?: () => void;
+}
+
+interface Instance {
+  instanceName: string;
+  name?: string;
+  pushName?: string;
+  ownerJid?: string;
+  profileName?: string;
+  profilePicUrl?: string;
+  connectionStatus: string;
+  state?: string;
 }
 
 const EVOLUTION_URL = import.meta.env.VITE_EVOLUTION_URL;
 const EVOLUTION_API_KEY = import.meta.env.VITE_EVOLUTION_API_KEY;
 
-const Connection: React.FC<ConnectionProps> = ({
-  language,
-  userId,
-  sessions,
-  onAddSession,
-  onSwitchSession,
-  onRemoveSession,
-  onSessionReset
-}) => {
+const Connection: React.FC<ConnectionProps> = ({ language, userId }) => {
   const isRtl = language === 'ar';
-  const SESSION_NAME = userId;
-  const [session, setSession] = useState<any>(null);
-  const [qrCode, setQrCode] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionNames, setSessionNames] = useState<Record<string, string>>({}); // Map IDs to display names (pushName or phone)
 
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  // State
+  const [instances, setInstances] = useState<Instance[]>([]);
+  const [selectedInstance, setSelectedInstance] = useState<Instance | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [qrCode, setQrCode] = useState<string>('');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newInstanceName, setNewInstanceName] = useState('');
 
-  const fetchSessionStatus = useCallback(async () => {
+  // Fetch all instances
+  const fetchInstances = async () => {
     try {
-      const response = await fetch(`${EVOLUTION_URL}/instance/fetchInstances?instanceName=${SESSION_NAME}`, {
-        headers: { 'apikey': EVOLUTION_API_KEY }
+      const res = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
+        headers: { 'apikey': EVOLUTION_API_KEY as string }
       });
+      const data = await res.json();
+      const records = Array.isArray(data) ? data : [];
 
-      const data = await response.json();
-      const instances = Array.isArray(data) ? data : (data.value || []);
-      const inst = instances.find((i: any) => i.instanceName === SESSION_NAME || i.name === SESSION_NAME);
+      // Filter & Normalize instances
+      const validInstances = records
+        .map((i: any) => {
+          const base = i.instance || i;
 
-      if (!inst) {
-        await startSession();
-        // After starting session, immediately set status to SCAN_QR and fetch QR
-        setSession({ status: 'SCAN_QR', me: null });
-        fetchQR();
-        return;
+          // Extract useful name, ignore generic ones like 'WhatsApp Business' in English and Arabic
+          let pName = base.pushName || base.profileName || i.pushName || i.profileName || null;
+          if (pName && (
+            pName.includes('WhatsApp') ||
+            pName.includes('Business') ||
+            pName.includes('واتساب') ||
+            pName.includes('للأعمال')
+          )) {
+            pName = null;
+          }
+
+          return {
+            ...i,
+            ...base,
+            instanceName: base.instanceName || base.name || i.instanceName || 'Unknown',
+            profileName: pName,
+            profilePicUrl: base.profilePicUrl || i.profilePicUrl || null
+          };
+        })
+        .filter((i: any) => i.instanceName && i.instanceName !== 'Unknown');
+
+      setInstances(validInstances);
+
+      // Update selected instance if it exists
+      if (selectedInstance) {
+        const updated = validInstances.find((i: Instance) => i.instanceName === selectedInstance.instanceName);
+        if (updated) setSelectedInstance(updated);
+      } else if (validInstances.length > 0 && !selectedInstance) {
+        setSelectedInstance(validInstances[0]);
       }
-
-      // Clear error if we successfully reached the API
-      setError(null);
-
-      // Evolution API status mapping
-      const state = inst.connectionStatus || inst.state || 'close';
-      const status = state.toLowerCase() === 'open' ? 'WORKING' : 'SCAN_QR';
-
-      const ownerData = inst.ownerJid || inst.owner || inst.number ? {
-        id: inst.ownerJid || inst.owner || inst.number,
-        pushName: inst.profileName || 'WhatsApp User'
-      } : null;
-
-      setSession({
-        status: status,
-        me: ownerData
-      });
-
-      if (ownerData) {
-        setSessionNames(prev => ({
-          ...prev,
-          [SESSION_NAME]: ownerData.pushName || ownerData.id.split('@')[0]
-        }));
-      }
-
-      if (status === 'SCAN_QR') {
-        fetchQR();
-      } else {
-        setQrCode(null);
-      }
-    } catch (err: any) {
-      console.error('Session status fetch error:', err);
-    } finally {
-      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching instances:', error);
     }
-  }, [SESSION_NAME]);
+  };
 
-  // Fetch names for all sessions to display in the list
   useEffect(() => {
-    const fetchAllSessionNames = async () => {
-      try {
-        const response = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
-          headers: { 'apikey': EVOLUTION_API_KEY }
-        });
-        const data = await response.json();
-        const instances: any[] = Array.isArray(data) ? data : (data.value || []);
+    fetchInstances();
+    const interval = setInterval(fetchInstances, 5000); // Auto refresh list
+    return () => clearInterval(interval);
+  }, []);
 
-        const nameMap: Record<string, string> = {};
-        sessions.forEach(sessId => {
-          const inst = instances.find(i => i.instanceName === sessId || i.name === sessId);
-          if (inst) {
-            const owner = inst.ownerJid || inst.owner || inst.number;
-            const name = inst.profileName;
-            if (name) nameMap[sessId] = name;
-            else if (owner) nameMap[sessId] = owner.split('@')[0];
+  // Fetch QR Code for selected instance
+  useEffect(() => {
+    if (selectedInstance?.instanceName && selectedInstance.connectionStatus !== 'open') {
+      const getQR = async () => {
+        try {
+          const res = await fetch(`${EVOLUTION_URL}/instance/connect/${selectedInstance.instanceName}`, {
+            headers: { 'apikey': EVOLUTION_API_KEY as string }
+          });
+          const data = await res.json();
+          if (data?.base64 || data?.qrcode) {
+            setQrCode(data.base64 || data.qrcode);
           }
-        });
-        setSessionNames(prev => ({ ...prev, ...nameMap }));
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    if (sessions.length > 0) fetchAllSessionNames();
-  }, [sessions]);
-
-
-  const startSession = async () => {
-    try {
-      // First check if it exists but is just disconnected
-      const checkRes = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
-        headers: { 'apikey': EVOLUTION_API_KEY }
-      });
-      const data = await checkRes.json();
-
-      // Evolution API can return array or { value: [] }
-      const instances = Array.isArray(data) ? data : (data.value || []);
-      const exists = instances.find((i: any) => i.instanceName === SESSION_NAME || i.name === SESSION_NAME);
-
-      if (!exists) {
-        const response = await fetch(`${EVOLUTION_URL}/instance/create`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': EVOLUTION_API_KEY
-          },
-          body: JSON.stringify({
-            instanceName: SESSION_NAME,
-            qrcode: true,
-            integration: "WHATSAPP-BAILEYS"
-          })
-        });
-
-        if (!response.ok) {
-          const errData = await response.json();
-          // If already exists, we can ignore the error
-          if (response.status === 400 && errData.response?.message?.includes('already exists')) {
-            setError(null);
-            return;
-          }
-          throw new Error(errData.response?.message?.[0] || 'Failed to create instance');
+        } catch (e) {
+          console.error('Error fetching QR:', e);
         }
-      }
-
-      setError(null); // Success or already exists
-    } catch (err: any) {
-      console.error('Start session error:', err);
-      setError(err.message);
-      throw err; // Re-throw to prevent loading UI from clearing prematurely in fetchSessionStatus if we didn't actually start
+      };
+      getQR();
+      const qrInterval = setInterval(getQR, 4000); // Dynamic QR refresh
+      return () => clearInterval(qrInterval);
+    } else {
+      setQrCode('');
     }
-  };
+  }, [selectedInstance?.instanceName, selectedInstance?.connectionStatus]);
 
-  const checkDeleteSession = (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setSessionToDelete(id);
-    setDeleteModalOpen(true);
-  };
-
-  const confirmDeleteSession = async () => {
-    if (!sessionToDelete) return;
+  const handleCreateInstance = async () => {
+    if (!newInstanceName.trim()) return;
+    setLoading(true);
+    console.log('Attempting to create instance:', newInstanceName);
 
     try {
-      setLoading(true);
-      const response = await fetch(`${EVOLUTION_URL}/instance/delete/${sessionToDelete}`, {
-        method: 'DELETE',
-        headers: { 'apikey': EVOLUTION_API_KEY }
-      });
-      // if (!response.ok) throw new Error('Failed to delete instance'); 
-
-      onRemoveSession(sessionToDelete);
-    } catch (err: any) {
-      setError(err.message);
-      onRemoveSession(sessionToDelete);
-    } finally {
-      setLoading(false);
-      setDeleteModalOpen(false);
-      setSessionToDelete(null);
-    }
-  };
-
-  const fetchQR = async () => {
-    try {
-      const response = await fetch(`${EVOLUTION_URL}/instance/connect/${SESSION_NAME}`, {
-        headers: { 'apikey': EVOLUTION_API_KEY }
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      if (data.base64) {
-        // Evolution returns data:image/png;base64,...
-        setQrCode(data.base64.split(',')[1] || data.base64);
-      }
-    } catch (err) {
-      console.error('Failed to fetch QR', err);
-    }
-  };
-
-  const sendTestMessage = async () => {
-    if (!session?.me?.id) {
-      alert(isRtl ? 'لم يتم العثور على بيانات حسابك بعد. يرجى الانتظار قليلاً أو إعادة تحميل الصفحة.' : 'Account data not found yet. Please wait a moment or refresh the page.');
-      return;
-    }
-
-    try {
-      // Clean number to include only digits (Evolution API expects only numbers)
-      const cleanNumber = session.me.id.split('@')[0].replace(/\D/g, '');
-
-      const response = await fetch(`${EVOLUTION_URL}/message/sendText/${SESSION_NAME}`, {
+      const response = await fetch(`${EVOLUTION_URL}/instance/create`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': EVOLUTION_API_KEY
+          'apikey': EVOLUTION_API_KEY as string
         },
         body: JSON.stringify({
-          number: cleanNumber,
-          text: isRtl ? 'تم الاتصال بنجاح بموقع Wapulse عبر Evolution API! ✅' : 'Successfully connected to Wapulse via Evolution API! ✅'
+          instanceName: newInstanceName,
+          token: '',
+          qrcode: true,
+          integration: "WHATSAPP-BAILEYS"
         })
       });
 
+      const data = await response.json();
+      console.log('API Response:', data);
+
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.response?.message?.[0] || 'Failed to send message');
+        throw new Error(data?.message || JSON.stringify(data) || 'Unknown error');
       }
 
-      alert(isRtl ? 'تم إرسال رسالة تجريبية لهاتفك!' : 'Test message sent to your phone!');
-    } catch (err: any) {
-      alert((isRtl ? 'فشل الإرسال: ' : 'Failed to send: ') + err.message);
+      // Success
+      setNewInstanceName('');
+      setShowAddModal(false);
+
+      // Refresh list
+      await fetchInstances();
+
+      // Find and select the new instance
+      const newInst = {
+        instanceName: newInstanceName,
+        connectionStatus: 'close',
+        ownerJid: ''
+      };
+
+      // Auto select to trigger QR fetch in useEffect
+      setSelectedInstance(newInst as any);
+
+      // Check if QR is directly in response
+      if (data.qrcode?.base64 || data.qrcode?.qrcode) {
+        setQrCode(data.qrcode.base64 || data.qrcode.qrcode);
+      } else {
+        // If not, fetch it specifically
+        setTimeout(async () => {
+          try {
+            const qrRes = await fetch(`${EVOLUTION_URL}/instance/connect/${newInstanceName}`, {
+              headers: { 'apikey': EVOLUTION_API_KEY as string }
+            });
+            const qrData = await qrRes.json();
+            if (qrData?.base64 || qrData?.qrcode) {
+              setQrCode(qrData.base64 || qrData.qrcode);
+            }
+          } catch (e) {
+            console.error('Failed to fetch initial QR', e);
+          }
+        }, 1500);
+      }
+
+      alert(isRtl ? 'تم إنشاء الرقم بنجاح!' : 'Instance created successfully!');
+
+    } catch (e: any) {
+      console.error('Error creating instance:', e);
+      alert(`${isRtl ? 'حدث خطأ' : 'Error'}: ${e.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  useEffect(() => {
-    setLoading(true); // Reset loading when session changes
-    setError(null);
-    setSession(null);
-    setQrCode(null); // Clear old QR
-
-    // Immediate execution
-    fetchSessionStatus();
-
-    const interval = setInterval(fetchSessionStatus, 10000);
-    return () => clearInterval(interval);
-  }, [fetchSessionStatus, userId]); // Depend on userId to refetch when switching
-
-  // REMOVED: Early return for loading to prevent full page white screen
-  // if (loading && !session && !error) { ... }
-
-  // Handle case where no sessions exist
-  if (!userId || sessions.length === 0) {
-    return (
-      <div className="p-6 max-w-7xl mx-auto space-y-8 page-enter h-full flex flex-col">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{isRtl ? 'إدارة الأرقام' : 'Manage Connections'}</h1>
-          <p className="text-slate-500 dark:text-slate-400">{isRtl ? 'اربط وأدر أرقام واتساب الخاصة بك من مكان واحد.' : 'Link and manage your WhatsApp numbers from one place.'}</p>
-        </div>
-
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center max-w-md mx-auto p-12 bg-white dark:bg-slate-900 rounded-3xl border dark:border-slate-800 shadow-sm">
-            <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-900/20 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-500">
-              <Smartphone className="w-10 h-10" />
-            </div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">{isRtl ? 'لا توجد أرقام مربوطة' : 'No Linked Numbers'}</h2>
-            <p className="text-slate-500 dark:text-slate-400 mb-8 leading-relaxed">
-              {isRtl ? 'لم تقم بربط أي رقم واتساب بعد. أضف رقمك الأول للبدء في استخدام النظام.' : 'You haven\'t linked any WhatsApp numbers yet. Add your first number to start using the system.'}
-            </p>
-            <button
-              onClick={onAddSession}
-              className="bg-emerald-500 text-white px-8 py-3 rounded-xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2 mx-auto"
-            >
-              <Plus className="w-5 h-5" />
-              {isRtl ? 'إضافة رقم جديد' : 'Add New Number'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const handleDeleteInstance = async (name: string) => {
+    if (!confirm(isRtl ? 'هل أنت متأكد من حذف هذا الرقم؟' : 'Are you sure you want to delete this number?')) return;
+    try {
+      await fetch(`${EVOLUTION_URL}/instance/delete/${name}`, {
+        method: 'DELETE',
+        headers: { 'apikey': EVOLUTION_API_KEY as string }
+      });
+      // Refresh list
+      await fetchInstances();
+      setSelectedInstance(null);
+    } catch (e) {
+      console.error('Error deleting instance:', e);
+    }
+  };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-8 page-enter">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{isRtl ? 'إدارة الأرقام' : 'Manage Connections'}</h1>
-        <p className="text-slate-500 dark:text-slate-400">{isRtl ? 'اربط وأدر أرقام واتساب الخاصة بك من مكان واحد.' : 'Link and manage your WhatsApp numbers from one place.'}</p>
-      </div>
+    <div className="p-6 md:p-8 space-y-8 bg-transparent min-h-full page-enter">
 
-      <div className="flex flex-col lg:flex-row gap-8 py-2">
-
-        {/* Sidebar List */}
-        <div className="w-full lg:w-1/3 bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-800 flex flex-col shadow-sm">
-          <div className="p-4 border-b dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/50">
-            <h3 className="font-bold text-slate-900 dark:text-white">{isRtl ? 'أرقامي' : 'My Numbers'}</h3>
-            <button
-              onClick={onAddSession}
-              className="p-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20"
-              title={isRtl ? 'إضافة رقم جديد' : 'Add New Number'}
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="p-2 space-y-2">
-            {sessions.map((sessId) => (
-              <div
-                key={sessId}
-                onClick={() => onSwitchSession(sessId)}
-                className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center gap-3 ${userId === sessId
-                  ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500 dark:border-emerald-500/50'
-                  : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
-              >
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${userId === sessId ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
-                  <Smartphone className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className={`font-bold text-sm truncate ${userId === sessId ? 'text-emerald-900 dark:text-emerald-400' : 'dark:text-white'}`}>
-                    {sessionNames[sessId] || (isRtl ? 'رقم جديد' : 'New Number')}
-                  </h4>
-                  <p className="text-xs text-slate-400 truncate">
-                    {sessId}
-                  </p>
-                </div>
-                <button
-                  onClick={(e) => checkDeleteSession(sessId, e)}
-                  className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Main Details View */}
-        <div className="flex-1 bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-800 shadow-sm flex flex-col p-6">
-
-          {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/50 p-4 rounded-xl flex items-center gap-3 text-red-600 dark:text-red-400 text-sm mb-6">
-              <AlertCircle className="w-5 h-5 flex-shrink-0" />
-              <p className="font-bold">{error}</p>
+      {/* Add Instance Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2rem] shadow-2xl border border-slate-100 dark:border-white/10 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 pb-4">
+              <h3 className="text-2xl font-[900] text-slate-900 dark:text-white mb-2">{isRtl ? 'إضافة رقم جديد' : 'Add New Number'}</h3>
+              <p className="text-slate-500 text-sm">{isRtl ? 'أدخل اسم مميز لهذا الرقم (مثلاً: خدمة العملاء)' : 'Enter a unique name for this connection (e.g. Support)'}</p>
             </div>
-          )}
-
-          {loading && !session && !error ? (
-            <div className="flex flex-col items-center justify-center space-y-6 flex-1 min-h-[400px]">
-              <Loader2 className="w-12 h-12 animate-spin text-emerald-500" />
-              <p className="text-slate-400 font-bold animate-pulse">{isRtl ? 'جاري تهيئة الحساب...' : 'Initializing Session...'}</p>
+            <div className="px-8 pb-6">
+              <input
+                type="text"
+                value={newInstanceName}
+                onChange={(e) => setNewInstanceName(e.target.value)}
+                placeholder={isRtl ? 'اسم الجلسة (إنجليزي فقط يفضل)' : 'Instance Name'}
+                className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-bold"
+              />
             </div>
-          ) : (
-            <>
-              <div className="flex flex-col items-center justify-center space-y-6 flex-1 min-h-[400px]">
-                {session?.status === 'WORKING' ? (
-                  <div className="w-64 h-64 bg-emerald-50 dark:bg-emerald-900/10 rounded-2xl flex flex-col items-center justify-center border-4 border-emerald-500/20">
-                    <div className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center text-white mb-4 shadow-lg shadow-emerald-500/20">
-                      <CheckCircle className="w-10 h-10" />
-                    </div>
-                    <p className="font-black text-emerald-600 dark:text-emerald-400 text-center px-4">
-                      {isRtl ? 'تم الاتصال بنجاح' : 'Connected Successfully'}
-                    </p>
-                    <p className="text-sm text-center text-emerald-600/60 dark:text-emerald-400/60 mt-2 px-2">
-                      {session.me?.pushName} <br />
-                      {session.me?.id?.split('@')[0]}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <div className="w-64 h-64 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center justify-center border-4 border-dashed border-slate-200 dark:border-slate-700 overflow-hidden">
-                      {qrCode ? (
-                        <div className="p-4 bg-white rounded-xl">
-                          <img src={`data:image/png;base64,${qrCode}`} alt="QR Code" className="w-48 h-48" />
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center gap-3">
-                          <Loader2 className="w-8 h-8 animate-spin text-slate-300" />
-                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                            {session?.status === 'STARTING' ? 'Starting Session...' : 'Loading QR Code...'}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                    {qrCode && (
-                      <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 bg-[#128C7E] text-white px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 shadow-lg w-max">
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                        {isRtl ? 'يتحدث كل ثانية' : 'Live Update'}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="text-center space-y-2">
-                  <h3 className="font-bold text-lg text-slate-900 dark:text-white">
-                    {session?.status === 'WORKING' ? (isRtl ? 'حسابك جاهز' : 'Account Ready') : (isRtl ? 'امسح رمز الاستجابة السريعة' : 'Scan the QR Code')}
-                  </h3>
-                  <p className="text-sm text-slate-500 max-w-xs mx-auto">
-                    {session?.status === 'WORKING'
-                      ? (isRtl ? 'يمكنك الآن البدء في إرسال الرسائل' : 'You can now start sending messages')
-                      : (isRtl ? 'افتح واتساب على هاتفك، اذهب إلى الإعدادات > الأجهزة المرتبطة > ربط جهاز.' : 'Open WhatsApp on your phone, go to Settings > Linked Devices > Link a Device.')
-                    }
-                  </p>
-                </div>
-              </div>
-
-              <div className="border-t dark:border-slate-800 pt-6 mt-6 flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <div className={`w-3 h-3 rounded-full ${session?.status === 'WORKING' ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                  <span className="text-sm font-bold text-slate-600 dark:text-slate-400">
-                    {session?.status === 'WORKING' ? (isRtl ? 'متصل' : 'Connected') : (isRtl ? 'غير متصل' : 'Disconnected')}
-                  </span>
-                </div>
-
-                <div className="flex gap-3">
-                  {session?.status === 'WORKING' && (
-                    <button
-                      onClick={sendTestMessage}
-                      className="text-xs font-bold text-emerald-800 bg-emerald-100 dark:bg-emerald-800/40 px-4 py-2 rounded-xl hover:bg-emerald-200 transition-colors"
-                    >
-                      {isRtl ? 'اختبار' : 'Test'}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => checkDeleteSession(userId)}
-                    className="text-xs font-bold text-red-600 bg-red-50 dark:bg-red-900/20 px-4 py-2 rounded-xl hover:bg-red-100 transition-colors flex items-center gap-2"
-                  >
-                    <LogOut className="w-3 h-3" />
-                    {isRtl ? 'إزالة هذا الحساب' : 'Remove Account'}
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-
-        </div>
-      </div>
-
-      {/* Instructions Card - Full Width Bottom */}
-      <div className="bg-slate-50 dark:bg-slate-900 p-8 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
-        <h4 className="font-bold text-lg text-slate-900 dark:text-white mb-6">{isRtl ? 'تعليمات الربط' : 'Linking Instructions'}</h4>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {[
-            { step: 1, text: isRtl ? 'افتح واتساب على هاتفك المحمول.' : 'Open WhatsApp on your mobile phone.' },
-            { step: 2, text: isRtl ? 'اضغط على القائمة أو الإعدادات واختر الأجهزة المرتبطة.' : 'Tap Menu or Settings and select Linked Devices.' },
-            { step: 3, text: isRtl ? 'اضغط على ربط جهاز.' : 'Tap on Link a Device.' },
-            { step: 4, text: isRtl ? 'وجه هاتفك نحو الشاشة لمسح الرمز.' : 'Point your phone to this screen to capture the code.' }
-          ].map((item) => (
-            <div key={item.step} className="flex items-start gap-4 p-4 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-sm h-full">
-              <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-bold flex items-center justify-center flex-shrink-0">
-                {item.step}
-              </div>
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">{item.text}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Delete Confirmation Modal */}
-      {deleteModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md p-6 shadow-xl border dark:border-slate-800">
-            <div className="w-12 h-12 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center text-red-600 mb-4 mx-auto">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <h3 className="text-xl font-bold text-center text-slate-900 dark:text-white mb-2">{isRtl ? 'حذف الرقم' : 'Delete Number'}</h3>
-            <p className="text-center text-slate-500 dark:text-slate-400 mb-8">
-              {isRtl
-                ? 'هل أنت متأكد من رغبتك في حذف هذا الرقم؟ سيتم فصل الاتصال وحذف البيانات.'
-                : 'Are you sure you want to delete this number? This will disconnect the session and remove data.'}
-            </p>
-            <div className="flex gap-3">
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 flex justify-end gap-3">
+              <button onClick={() => setShowAddModal(false)} className="px-5 py-2.5 font-bold text-slate-500 hover:text-slate-700">{isRtl ? 'إلغاء' : 'Cancel'}</button>
               <button
-                onClick={() => setDeleteModalOpen(false)}
-                className="flex-1 py-3 px-4 rounded-xl border border-slate-200 dark:border-slate-700 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 dark:text-white transition-colors"
+                onClick={handleCreateInstance}
+                disabled={loading || !newInstanceName.trim()}
+                className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 transition-all disabled:opacity-50"
               >
-                {isRtl ? 'إلغاء' : 'Cancel'}
-              </button>
-              <button
-                onClick={confirmDeleteSession}
-                className="flex-1 py-3 px-4 rounded-xl bg-red-500 text-white font-bold hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20"
-              >
-                {isRtl ? 'حذف' : 'Delete'}
+                {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : (isRtl ? 'إنشاء' : 'Create')}
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div>
+          <h1 className="text-4xl font-[900] tracking-tighter text-slate-900 dark:text-white mb-2">{isRtl ? 'إدارة الربط' : 'Connections'}</h1>
+          <p className="text-slate-500 dark:text-slate-400 font-medium">{isRtl ? 'أضف وأدر أرقام واتساب الخاصة بك من مكان واحد.' : 'Add and manage your WhatsApp numbers from one place.'}</p>
+        </div>
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3.5 rounded-2xl font-bold shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 hover:-translate-y-1 transition-all flex items-center gap-2"
+        >
+          <Plus className="w-5 h-5" />
+          {isRtl ? 'إضافة رقم' : 'Add Number'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+        {/* Instances List */}
+        <div className="lg:col-span-1 space-y-4">
+          <h3 className="text-xl font-[900] text-slate-900 dark:text-white px-2">{isRtl ? 'الأرقام المتاحة' : 'Available Numbers'}</h3>
+          <div className="space-y-3">
+            {instances.length === 0 ? (
+              <div className="p-8 text-center bg-slate-50 dark:bg-slate-800/50 rounded-[2rem] border border-slate-100 dark:border-white/5">
+                <Smartphone className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-400 font-bold text-sm">{isRtl ? 'لا توجد أرقام مضافة' : 'No numbers added'}</p>
+              </div>
+            ) : (
+              instances.map((inst, idx) => (
+                <div
+                  key={`${inst.instanceName}-${idx}`}
+                  onClick={() => setSelectedInstance(inst)}
+                  className={`group p-4 rounded-[1.5rem] border cursor-pointer transition-all relative ${selectedInstance?.instanceName === inst.instanceName
+                      ? 'bg-white dark:bg-slate-800 border-emerald-500 shadow-lg shadow-emerald-500/10 scale-[1.02]'
+                      : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-white/5 hover:border-emerald-200 dark:hover:border-emerald-500/30'
+                    }`}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0 ${inst.connectionStatus === 'open'
+                        ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20'
+                        : 'bg-slate-100 text-slate-400 dark:bg-slate-800'
+                      }`}>
+                      {inst.profilePicUrl ? (
+                        <img src={inst.profilePicUrl} alt={inst.instanceName} className="w-full h-full object-cover" />
+                      ) : (
+                        <Smartphone className="w-6 h-6" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-bold text-slate-900 dark:text-white truncate">{inst.instanceName}</h4>
+                      <p className="text-xs text-slate-500 font-medium truncate">
+                        {inst.ownerJid ? `+${inst.ownerJid.split('@')[0]}` : (isRtl ? 'غير متصل' : 'Not Connected')}
+                      </p>
+                    </div>
+                    <div className={`w-2 h-2 rounded-full ${inst.connectionStatus === 'open' ? 'bg-emerald-500' : 'bg-red-400'}`}></div>
+                  </div>
+
+                  {/* Delete Button (Hover) */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const nameToDelete = inst.instanceName || inst.name;
+                      console.log('Deleting instance:', nameToDelete, 'Full object:', inst);
+                      handleDeleteInstance(nameToDelete);
+                    }}
+                    className="absolute top-2 right-2 p-2 bg-red-50 text-red-500 rounded-xl opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                    title={isRtl ? 'حذف الرقم' : 'Delete Number'}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Connection Detail / QR */}
+        <div className="lg:col-span-2">
+          {selectedInstance ? (
+            <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-white/5 shadow-xl shadow-slate-200/50 dark:shadow-black/20 overflow-hidden relative min-h-[500px] flex flex-col">
+              {/* Status Bar */}
+              <div className="p-8 border-b border-slate-100 dark:border-white/5 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/30">
+                <div>
+                  <h2 className="text-2xl font-[900] text-slate-900 dark:text-white flex items-center gap-2">
+                    {selectedInstance.instanceName}
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${selectedInstance.connectionStatus === 'open'
+                        ? 'bg-emerald-100 text-emerald-600'
+                        : 'bg-amber-100 text-amber-600'
+                      }`}>
+                      {selectedInstance.connectionStatus === 'open' ? 'Online' : 'Offline'}
+                    </span>
+                  </h2>
+                  <p className="text-slate-400 text-sm font-medium mt-1 uppercase tracking-widest flex items-center gap-2">
+                    <Server className="w-3 h-3" /> API Instance ID: {selectedInstance.instanceName}
+                  </p>
+                </div>
+                {selectedInstance.connectionStatus === 'open' && (
+                  <button onClick={() => handleDeleteInstance(selectedInstance.instanceName)} className="text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl font-bold text-xs transition-colors border border-transparent hover:border-red-100">
+                    {isRtl ? 'تسجيل خروج' : 'Logout'}
+                  </button>
+                )}
+              </div>
+
+              {/* Main Content */}
+              <div className="flex-1 p-8 md:p-12 flex flex-col items-center justify-center text-center relative">
+                {selectedInstance.connectionStatus === 'open' ? (
+                  <div className="animate-in zoom-in duration-300">
+                    <div className="relative inline-block mb-6">
+                      <div className="absolute inset-0 bg-emerald-500/20 blur-3xl rounded-full"></div>
+                      <img
+                        src={selectedInstance.profilePicUrl || "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6b/WhatsApp.svg/1200px-WhatsApp.svg.png"}
+                        className="w-32 h-32 rounded-[2rem] shadow-2xl relative z-10 bg-white"
+                        alt="Profile"
+                      />
+                      <div className="absolute -bottom-2 -right-2 bg-emerald-500 text-white p-2 rounded-full border-4 border-white dark:border-slate-900 z-20">
+                        <CheckCircle className="w-6 h-6" />
+                      </div>
+                    </div>
+                    <h3 className="text-3xl font-[900] text-slate-900 dark:text-white mb-2">
+                      {selectedInstance.profileName || selectedInstance.instanceName || (isRtl ? 'واتساب' : 'WhatsApp')}
+                    </h3>
+                    <p className="text-xl text-slate-500 font-mono font-medium mb-6">
+                      +{selectedInstance.ownerJid?.split('@')[0]}
+                    </p>
+                    <div className="flex justify-center gap-4">
+                      <div className="px-6 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center gap-3">
+                        <Battery className="w-5 h-5 text-emerald-500" />
+                        <span className="font-bold text-slate-700 dark:text-slate-300">80%</span>
+                      </div>
+                      <div className="px-6 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center gap-3">
+                        <Signal className="w-5 h-5 text-emerald-500" />
+                        <span className="font-bold text-slate-700 dark:text-slate-300">Good</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : qrCode ? (
+                  <div className="w-full flex flex-col items-center animate-in fade-in duration-500">
+                    <div className="p-4 bg-white rounded-3xl shadow-xl border-4 border-slate-100 dark:border-slate-800 mb-6 relative group">
+                      <div className="absolute -inset-1 bg-gradient-to-tr from-emerald-500 to-teal-500 rounded-[2rem] blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+                      <img src={qrCode} className="w-64 h-64 object-contain relative z-10" alt="QR" />
+                    </div>
+                    <h4 className="text-xl font-[900] text-slate-900 dark:text-white mb-2">{isRtl ? 'امسح الرمز للربط' : 'Scan QR to Connect'}</h4>
+                    <p className="text-slate-500 max-w-sm">{isRtl ? 'افتح واتساب > الأجهزة المرتبطة > ربط جهاز' : 'Open WhatsApp > Linked Devices > Link a Device'}</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-4 opacity-50">
+                    <div className="w-12 h-12 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin"></div>
+                    <p className="font-bold uppercase tracking-widest text-xs text-slate-400">{isRtl ? 'جاري الاتصال...' : 'Connecting...'}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="h-full bg-slate-50 dark:bg-slate-800/20 rounded-[2.5rem] border-2 border-dashed border-slate-200 dark:border-white/10 flex flex-col items-center justify-center text-center p-12">
+              <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                <Smartphone className="w-8 h-8 text-slate-300" />
+              </div>
+              <h3 className="text-xl font-[900] text-slate-900 dark:text-white mb-2">{isRtl ? 'اختر رقماً للإدارة' : 'Select a Number'}</h3>
+              <p className="text-slate-400 max-w-xs">{isRtl ? 'اختر رقماً من القائمة الجانبية أو أضف رقماً جديداً للبدء.' : 'Select a number from the list or add a new one to get started.'}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Instructions Card */}
+        <div className="lg:col-span-3 bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-white/5 p-8 shadow-sm">
+          <h3 className="text-xl font-[900] text-slate-900 dark:text-white mb-6 flex items-center gap-2">
+            <span className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 flex items-center justify-center">
+              <Lightbulb className="w-5 h-5" />
+            </span>
+            {isRtl ? 'كيفية ربط جهازك' : 'How to Connect Your Device'}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
+            {/* Step 1 */}
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-3xl relative overflow-hidden group transition-all hover:-translate-y-1 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <div className="w-14 h-14 bg-white dark:bg-slate-900 rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-4 text-emerald-600 group-hover:scale-110 transition-transform">
+                <Smartphone className="w-7 h-7" />
+              </div>
+              <h4 className="font-bold text-slate-800 dark:text-white mb-2">{isRtl ? '1. افتح واتساب' : '1. Open WhatsApp'}</h4>
+              <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">{isRtl ? 'افتح تطبيق واتساب على هاتفك المحمول.' : 'Open WhatsApp on your mobile phone.'}</p>
+            </div>
+            {/* Step 2 */}
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-3xl relative overflow-hidden group transition-all hover:-translate-y-1 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <div className="w-14 h-14 bg-white dark:bg-slate-900 rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-4 text-emerald-600 group-hover:scale-110 transition-transform">
+                <Settings className="w-7 h-7" />
+              </div>
+              <h4 className="font-bold text-slate-800 dark:text-white mb-2">{isRtl ? '2. الأجهزة المرتبطة' : '2. Linked Devices'}</h4>
+              <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">{isRtl ? 'اذهب للإعدادات > الأجهزة المرتبطة > ربط جهاز.' : 'Go to Settings > Linked Devices > Link a Device.'}</p>
+            </div>
+            {/* Step 3 */}
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-3xl relative overflow-hidden group transition-all hover:-translate-y-1 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <div className="w-14 h-14 bg-white dark:bg-slate-900 rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-4 text-emerald-600 group-hover:scale-110 transition-transform">
+                <QrCode className="w-7 h-7" />
+              </div>
+              <h4 className="font-bold text-slate-800 dark:text-white mb-2">{isRtl ? '3. امسح الرمز' : '3. Scan QR Code'}</h4>
+              <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">{isRtl ? 'وجه الكاميرا نحو رمز QR الظاهر على الشاشة.' : 'Point your camera at the QR code shown on screen.'}</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 };
+
 export default Connection;
