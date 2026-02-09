@@ -1,5 +1,5 @@
 
-export type Page = 'dashboard' | 'inbox' | 'campaigns' | 'scheduled' | 'contacts' | 'connection' | 'analytics' | 'settings';
+export type Page = 'dashboard' | 'inbox' | 'campaigns' | 'scheduled' | 'contacts' | 'connection' | 'analytics' | 'settings' | 'create-campaign';
 
 export interface User {
   id: string;

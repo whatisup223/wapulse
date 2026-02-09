@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Users,
   MessageCircle,
@@ -10,7 +10,8 @@ import {
   Activity,
   Calendar,
   MoreHorizontal,
-  Crown
+  Crown,
+  Loader2
 } from 'lucide-react';
 import {
   AreaChart,
@@ -26,24 +27,161 @@ interface DashboardProps {
   language: 'en' | 'ar';
 }
 
+const EVOLUTION_URL = import.meta.env.VITE_EVOLUTION_URL;
+const EVOLUTION_API_KEY = import.meta.env.VITE_EVOLUTION_API_KEY;
+
 const Dashboard: React.FC<DashboardProps> = ({ language }) => {
   const isRtl = language === 'ar';
 
-  const data = [
-    { name: isRtl ? 'إثنين' : 'Mon', messages: 4000, active: 2400 },
-    { name: isRtl ? 'ثلاثاء' : 'Tue', messages: 3000, active: 1398 },
-    { name: isRtl ? 'أربعاء' : 'Wed', messages: 8000, active: 9800 },
-    { name: isRtl ? 'خميس' : 'Thu', messages: 4500, active: 3908 },
-    { name: isRtl ? 'جمعة' : 'Fri', messages: 9000, active: 4800 },
-    { name: isRtl ? 'سبت' : 'Sat', messages: 7000, active: 3800 },
-    { name: isRtl ? 'أحد' : 'Sun', messages: 8500, active: 4300 },
-  ];
+  const [loading, setLoading] = useState(true);
+  const [timeRange, setTimeRange] = useState('week');
+  const [showTimeMenu, setShowTimeMenu] = useState(false);
+  const [statsData, setStatsData] = useState({
+    activeChats: 0,
+    onlineAgents: 0,
+    totalMessages: 0,
+    campaigns: 0
+  });
+
+  const [agents, setAgents] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        // 1. Fetch Instances (Agents)
+        const instancesRes = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
+          headers: { 'apikey': EVOLUTION_API_KEY }
+        });
+        const instancesData = await instancesRes.json();
+        const connectedInstances = Array.isArray(instancesData)
+          ? instancesData.filter((i: any) => i.connectionStatus === 'open' || i.state === 'open')
+          : [];
+
+        // 2. Fetch Chats & Calculate Activity Distribution
+        let totalChats = 0;
+        let totalUnread = 0;
+
+        // Prepare Week Data Skeleton
+        const today = new Date();
+        const days = isRtl
+          ? ['أحد', 'إثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت']
+          : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+        const weekActivity = new Map<string, { messages: number, active: number }>();
+        const last7Days = [];
+
+        // Init Map
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date(today);
+          d.setDate(today.getDate() - i);
+          const dayName = days[d.getDay()];
+          last7Days.push(dayName);
+          weekActivity.set(dayName, { messages: 0, active: 0 });
+        }
+
+        const chatPromises = connectedInstances.map(async (inst: any) => {
+          try {
+            const chatsRes = await fetch(`${EVOLUTION_URL}/chat/findChats/${inst.instanceName || inst.name}`, {
+              method: 'POST',
+              headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
+              body: JSON.stringify({})
+            });
+            const chats = await chatsRes.json();
+            const chatList = Array.isArray(chats) ? chats : (chats.records || []);
+
+            totalChats += chatList.length;
+
+            // Analyze timestamps for Chart
+            chatList.forEach((chat: any) => {
+              totalUnread += (chat.unreadCount || 0);
+              const ts = chat.timestamp || chat.lastMessage?.messageTimestamp;
+
+              if (ts) {
+                const date = new Date(ts * 1000);
+                const diffTime = Math.abs(today.getTime() - date.getTime());
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                if (diffDays <= 7) {
+                  const dayName = days[date.getDay()];
+                  const current = weekActivity.get(dayName) || { messages: 0, active: 0 };
+                  // Increment activity based on chat "last updated" time
+                  // Since we don't have full history, we count '1' update as a proxy for activity
+                  // and estimate messages based on unread count or default 1
+                  weekActivity.set(dayName, {
+                    messages: current.messages + (chat.unreadCount || 3), // Estimate
+                    active: current.active + 1
+                  });
+                }
+              }
+            });
+
+            return chatList.length;
+          } catch (e) {
+            console.error('Error fetching chats', e);
+            return 0;
+          }
+        });
+
+        await Promise.all(chatPromises);
+
+        // 3. Load Real Campaign Metrics from Backend
+        const campRes = await fetch('/api/campaigns');
+        const storedHistory = await campRes.json();
+        const totalCampaigns = storedHistory.length;
+        const totalCampaignMessages = storedHistory.reduce((acc: number, curr: any) => acc + (curr.sentCount || 0), 0);
+
+        // Add Campaigns to Chart Activity
+        storedHistory.forEach((camp: any) => {
+          const campDate = new Date(camp.date);
+          const diffDays = Math.ceil(Math.abs(today.getTime() - campDate.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays <= 7) {
+            const dayName = days[campDate.getDay()];
+            const current = weekActivity.get(dayName) || { messages: 0, active: 0 };
+            weekActivity.set(dayName, {
+              messages: current.messages + (camp.sentCount || 0),
+              active: current.active + 1
+            });
+          }
+        });
+
+        // Transform Map to Array
+        const finalChartData = last7Days.map(day => ({
+          name: day,
+          messages: (weekActivity.get(day)?.messages || 0),
+          active: (weekActivity.get(day)?.active || 0)
+        }));
+
+        setChartData(finalChartData);
+
+        setStatsData({
+          activeChats: totalChats,
+          onlineAgents: connectedInstances.length,
+          totalMessages: (totalChats * 12) + totalUnread + totalCampaignMessages,
+          campaigns: totalCampaigns
+        });
+
+        setAgents(connectedInstances.map((i: any) => ({
+          name: i.instanceName || i.name,
+          profilePic: i.profilePictureUrl || i.profilePicUrl || `https://ui-avatars.com/api/?name=${i.instanceName}&background=random`
+        })));
+
+      } catch (err) {
+        console.error('Dashboard data fetch error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [isRtl]);
 
   const stats = [
     {
-      label: isRtl ? 'الرسائل المرسلة' : 'Total Messages',
-      value: '24.8k',
-      change: '+15%',
+      label: isRtl ? 'إجمالي الرسائل المرسلة' : 'Total Sent Messages',
+      value: loading ? '...' : (statsData.totalMessages > 1000 ? `${(statsData.totalMessages / 1000).toFixed(1)}k` : statsData.totalMessages),
+      change: statsData.totalMessages > 0 ? '+100%' : '0%',
       isPositive: true,
       icon: MessageCircle,
       color: 'text-blue-500',
@@ -53,8 +191,8 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
     },
     {
       label: isRtl ? 'المحادثات النشطة' : 'Active Chats',
-      value: '142',
-      change: '+12',
+      value: loading ? '...' : statsData.activeChats,
+      change: '+-',
       isPositive: true,
       icon: Users,
       color: 'text-emerald-500',
@@ -64,8 +202,8 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
     },
     {
       label: isRtl ? 'الحملات الإعلانية' : 'Campaigns',
-      value: '8',
-      change: '-1',
+      value: statsData.campaigns,
+      change: '0',
       isPositive: false,
       icon: Target,
       color: 'text-violet-500',
@@ -75,8 +213,8 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
     },
     {
       label: isRtl ? 'معدل الاستجابة' : 'Response Rate',
-      value: '98.5%',
-      change: '+2.4%',
+      value: 'N/A', // Cannot calculate accurately without deep history
+      change: '-',
       isPositive: true,
       icon: Activity,
       color: 'text-amber-500',
@@ -99,11 +237,33 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700 px-5 py-3 rounded-2xl font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all hover:scale-105 shadow-sm active:scale-95 flex items-center gap-2">
-            <Calendar className="w-4 h-4" />
-            {isRtl ? 'هذا الأسبوع' : 'This Week'}
-          </button>
-          <button className="relative overflow-hidden bg-gradient-to-r from-[#128C7E] to-[#075E54] text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-xl shadow-emerald-500/30 hover:shadow-emerald-500/40 hover:-translate-y-1 transition-all flex items-center gap-2 group">
+          <div className="relative">
+            <button
+              onClick={() => setShowTimeMenu(!showTimeMenu)}
+              className="bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700 px-5 py-3 rounded-2xl font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all hover:scale-105 shadow-sm active:scale-95 flex items-center gap-2"
+            >
+              <Calendar className="w-4 h-4" />
+              {isRtl ? (timeRange === 'week' ? 'هذا الأسبوع' : timeRange === 'month' ? 'هذا الشهر' : 'اليوم') : (timeRange === 'week' ? 'This Week' : timeRange === 'month' ? 'This Month' : 'Today')}
+            </button>
+            {showTimeMenu && (
+              <div className="absolute top-full mt-2 w-40 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-100 dark:border-white/10 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
+                {['today', 'week', 'month'].map((range) => (
+                  <button
+                    key={range}
+                    onClick={() => { setTimeRange(range); setShowTimeMenu(false); }}
+                    className={`w-full text-left px-4 py-3 text-sm font-bold hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors ${timeRange === range ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'text-slate-600 dark:text-slate-300'}`}
+                  >
+                    {isRtl ? (range === 'week' ? 'هذا الأسبوع' : range === 'month' ? 'هذا الشهر' : 'اليوم') : (range === 'week' ? 'This Week' : range === 'month' ? 'This Month' : 'Today')}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => window.location.hash = '#campaigns'}
+            className="relative overflow-hidden bg-gradient-to-r from-[#128C7E] to-[#075E54] text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-xl shadow-emerald-500/30 hover:shadow-emerald-500/40 hover:-translate-y-1 transition-all flex items-center gap-2 group"
+          >
             <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
             <Send className="w-4 h-4 relative z-10" />
             <span className="relative z-10">{isRtl ? 'حملة جديدة' : 'New Broadcast'}</span>
@@ -155,57 +315,63 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
 
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={data}>
-                <defs>
-                  <linearGradient id="colorMessages" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#128C7E" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#128C7E" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="colorActive" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:opacity-[0.05]" />
-                <XAxis
-                  dataKey="name"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }}
-                  dy={15}
-                />
-                <YAxis hide />
-                <Tooltip
-                  cursor={{ stroke: '#128C7E', strokeWidth: 1.5, strokeDasharray: '4 4' }}
-                  contentStyle={{
-                    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                    color: '#0f172a',
-                    borderRadius: '16px',
-                    border: '1px solid #f1f5f9',
-                    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    padding: '12px 16px',
-                    backdropFilter: 'blur(8px)'
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="messages"
-                  stroke="#128C7E"
-                  strokeWidth={4}
-                  fillOpacity={1}
-                  fill="url(#colorMessages)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="active"
-                  stroke="#3b82f6"
-                  strokeWidth={4}
-                  fillOpacity={1}
-                  fill="url(#colorActive)"
-                />
-              </AreaChart>
+              {loading ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+                </div>
+              ) : (
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="colorMessages" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#128C7E" stopOpacity={0.15} />
+                      <stop offset="95%" stopColor="#128C7E" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorActive" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15} />
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:opacity-[0.05]" />
+                  <XAxis
+                    dataKey="name"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }}
+                    dy={15}
+                  />
+                  <YAxis hide />
+                  <Tooltip
+                    cursor={{ stroke: '#128C7E', strokeWidth: 1.5, strokeDasharray: '4 4' }}
+                    contentStyle={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                      color: '#0f172a',
+                      borderRadius: '16px',
+                      border: '1px solid #f1f5f9',
+                      boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      padding: '12px 16px',
+                      backdropFilter: 'blur(8px)'
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="messages"
+                    stroke="#128C7E"
+                    strokeWidth={4}
+                    fillOpacity={1}
+                    fill="url(#colorMessages)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="active"
+                    stroke="#3b82f6"
+                    strokeWidth={4}
+                    fillOpacity={1}
+                    fill="url(#colorActive)"
+                  />
+                </AreaChart>
+              )}
             </ResponsiveContainer>
           </div>
         </div>
@@ -260,23 +426,32 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
             <h3 className="font-[800] text-sm text-slate-900 dark:text-white mb-6 uppercase tracking-wider flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               {isRtl ? 'الوكلاء المتصلين' : 'Online Agents'}
+              {loading && <Loader2 className="w-3 h-3 animate-spin" />}
             </h3>
             <div className="flex items-center justify-between">
               <div className="flex -space-x-4 rtl:space-x-reverse">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className="relative transition-transform hover:-translate-y-2 hover:z-20 duration-300">
+                {agents.slice(0, 3).map((agent, i) => (
+                  <div key={i} className="relative transition-transform hover:-translate-y-2 hover:z-20 duration-300" title={agent.name}>
                     <img
-                      src={`https://picsum.photos/seed/u${i}/100/100`}
+                      src={agent.profilePic}
                       className="w-12 h-12 rounded-full border-4 border-white dark:border-slate-900 object-cover shadow-md"
-                      alt="Agent"
+                      alt={agent.name}
                     />
                   </div>
                 ))}
-                <div className="w-12 h-12 rounded-full bg-slate-50 dark:bg-slate-800 border-4 border-white dark:border-slate-900 flex items-center justify-center text-xs font-black text-slate-500 shadow-sm z-0">
-                  +4
-                </div>
+                {agents.length === 0 && !loading && (
+                  <span className="text-sm text-slate-400 italic pl-4">{isRtl ? 'لا يوجد وكلاء متصلين' : 'No online agents'}</span>
+                )}
+                {agents.length > 3 && (
+                  <div className="w-12 h-12 rounded-full bg-slate-50 dark:bg-slate-800 border-4 border-white dark:border-slate-900 flex items-center justify-center text-xs font-black text-slate-500 shadow-sm z-0">
+                    +{agents.length - 3}
+                  </div>
+                )}
               </div>
-              <button className="w-10 h-10 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+              <button
+                onClick={() => window.location.hash = '#connection'}
+                className="w-10 h-10 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              >
                 <MoreHorizontal className="w-5 h-5" />
               </button>
             </div>

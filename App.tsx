@@ -5,6 +5,7 @@ import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
 import Inbox from './pages/Inbox';
 import Campaigns from './pages/Campaigns';
+import CreateCampaign from './pages/CreateCampaign';
 import Contacts from './pages/Contacts';
 import Connection from './pages/Connection';
 import Analytics from './pages/Analytics';
@@ -16,7 +17,11 @@ import LandingPage from './pages/LandingPage';
 import { Page } from './types';
 
 const App: React.FC = () => {
-  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    const hash = window.location.hash.slice(1);
+    const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'create-campaign', 'contacts', 'connection', 'analytics', 'settings'];
+    return (hash && validPages.includes(hash as Page)) ? (hash as Page) : 'dashboard';
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -31,7 +36,7 @@ const App: React.FC = () => {
   // Initialize auth state based on URL hash to prevent flash
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     const hash = window.location.hash.slice(1) || 'landing';
-    const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'contacts', 'connection', 'analytics', 'settings'];
+    const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'create-campaign', 'contacts', 'connection', 'analytics', 'settings'];
     return validPages.includes(hash as Page);
   });
 
@@ -68,7 +73,7 @@ const App: React.FC = () => {
       setIsAuthenticated(false);
     } else {
       // It's a dashboard route
-      const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'contacts', 'connection', 'analytics', 'settings'];
+      const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'create-campaign', 'contacts', 'connection', 'analytics', 'settings'];
       if (validPages.includes(hash as Page)) {
         setCurrentPage(hash as Page);
         setIsAuthenticated(true);
@@ -96,7 +101,7 @@ const App: React.FC = () => {
         setIsAuthenticated(false);
       } else {
         // It's a dashboard route
-        const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'contacts', 'connection', 'analytics', 'settings'];
+        const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'create-campaign', 'contacts', 'connection', 'analytics', 'settings'];
         if (validPages.includes(hash as Page)) {
           setCurrentPage(hash as Page);
           setIsAuthenticated(true);
@@ -247,6 +252,7 @@ const App: React.FC = () => {
       case 'dashboard': return <Dashboard language={language} />;
       case 'inbox': return <Inbox language={language} userId={activeSessionId} />;
       case 'campaigns': return <Campaigns language={language} />;
+      case 'create-campaign': return <CreateCampaign language={language} onBack={() => window.location.hash = '#campaigns'} />;
       case 'contacts': return <Contacts language={language} />;
       case 'connection': return (
         <Connection

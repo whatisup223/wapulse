@@ -1,0 +1,94 @@
+{
+  "campaigns": [
+    {
+      "id": "1770670915569",
+      "name": "مجدوله اختبار",
+      "message": "مجدولة اختبار",
+      "senderInstance": "4444444",
+      "minDelay": 1,
+      "maxDelay": 5,
+      "status": "sent",
+      "scheduledAt": "2026-02-09T23:03",
+      "type": "إدخال يدوي",
+      "current": 1,
+      "total": 1,
+      "sentCount": 1,
+      "failedCount": 0,
+      "date": "2026-02-09T21:01:55.569Z",
+      "recipientsList": [
+        {
+          "number": "201022035190",
+          "status": "sent"
+        }
+      ]
+    },
+    {
+      "id": "1770670775982",
+      "name": "Working Scheduled Test",
+      "message": "Finally works!",
+      "senderInstance": "4444444",
+      "minDelay": 2,
+      "maxDelay": 5,
+      "status": "sent",
+      "scheduledAt": "2026-02-09T23:01:00",
+      "type": "Test",
+      "current": 1,
+      "total": 1,
+      "sentCount": 1,
+      "failedCount": 0,
+      "date": "2026-02-09T20:59:35.982Z",
+      "recipientsList": [
+        {
+          "number": "201091515201",
+          "status": "sent"
+        }
+      ]
+    },
+    {
+      "id": "1770670511832",
+      "name": "Scheduled Test via AI",
+      "message": "This is a test message from the background worker",
+      "senderInstance": "test-instance",
+      "minDelay": 5,
+      "maxDelay": 10,
+      "status": "partial",
+      "scheduledAt": "2026-02-09T22:58:00",
+      "type": "Test",
+      "current": 1,
+      "total": 1,
+      "sentCount": 0,
+      "failedCount": 1,
+      "date": "2026-02-09T20:55:11.832Z",
+      "recipientsList": [
+        {
+          "number": "201091515201",
+          "status": "failed"
+        }
+      ]
+    },
+    {
+      "id": "1770670448802",
+      "name": "تجربة حمله مجدولة",
+      "message": "حمله محدولة تجريبية",
+      "senderInstance": "4444444",
+      "minDelay": 1,
+      "maxDelay": 10,
+      "status": "partial",
+      "scheduledAt": "2026-02-09T22:56",
+      "type": "إدخال يدوي",
+      "current": 1,
+      "total": 1,
+      "sentCount": 0,
+      "failedCount": 1,
+      "date": "2026-02-09T20:54:08.802Z",
+      "recipientsList": [
+        {
+          "number": "201022035190",
+          "status": "failed"
+        }
+      ]
+    }
+  ],
+  "contacts": [],
+  "settings": {}
+}
