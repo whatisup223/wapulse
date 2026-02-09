@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './pages/Dashboard';
@@ -9,7 +9,9 @@ import Contacts from './pages/Contacts';
 import Connection from './pages/Connection';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
-import Auth from './pages/Auth';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
 import LandingPage from './pages/LandingPage';
 import { Page } from './types';
 
@@ -17,10 +19,29 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [language, setLanguage] = useState<'en' | 'ar'>('en');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [showLanding, setShowLanding] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('wapulse_theme');
+    return saved === 'dark';
+  });
+  const [language, setLanguage] = useState<'en' | 'ar'>(() => {
+    const saved = localStorage.getItem('wapulse_language');
+    return (saved === 'ar' || saved === 'en') ? saved : 'en';
+  });
+
+  // Initialize auth state based on URL hash to prevent flash
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    const hash = window.location.hash.slice(1) || 'landing';
+    const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'contacts', 'connection', 'analytics', 'settings'];
+    return validPages.includes(hash as Page);
+  });
+
+  const [showLanding, setShowLanding] = useState(() => {
+    const hash = window.location.hash.slice(1) || 'landing';
+    return hash === 'landing';
+  });
+
+  // Track current hash for auth page navigation
+  const [currentHash, setCurrentHash] = useState(() => window.location.hash.slice(1) || 'landing');
   const [sessions, setSessions] = useState<string[]>(() => {
     const saved = localStorage.getItem('wapulse_sessions');
     return saved ? JSON.parse(saved) : [`user_${Date.now()}`];
@@ -33,6 +54,9 @@ const App: React.FC = () => {
 
     return (saved && parsedSessions.includes(saved)) ? saved : parsedSessions[0];
   });
+
+  // Track if this is the initial load to prevent hash override
+  const isInitialLoad = useRef(true);
 
   // Sync URL hash with current route on mount
   useEffect(() => {
@@ -53,10 +77,48 @@ const App: React.FC = () => {
         window.location.hash = '#landing';
       }
     }
+
+    // Mark initial load as complete after all effects have run
+    setTimeout(() => {
+      isInitialLoad.current = false;
+    }, 0);
   }, []);
 
-  // Update URL hash when page/auth state changes
+  // Listen for hash changes to update the view without page refresh
   useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1) || 'landing';
+      setCurrentHash(hash); // Update hash state to trigger re-render
+
+      // Check if it's an auth route
+      if (['landing', 'login', 'register', 'forgot-password'].includes(hash)) {
+        setShowLanding(hash === 'landing');
+        setIsAuthenticated(false);
+      } else {
+        // It's a dashboard route
+        const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'contacts', 'connection', 'analytics', 'settings'];
+        if (validPages.includes(hash as Page)) {
+          setCurrentPage(hash as Page);
+          setIsAuthenticated(true);
+          setShowLanding(false);
+        }
+      }
+    };
+
+    // Add event listener for hash changes
+    window.addEventListener('hashchange', handleHashChange);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+    };
+  }, []);
+
+  // Update URL hash when page/auth state changes (skip on initial load)
+  useEffect(() => {
+    // Don't update hash on initial load - let the hash from URL take precedence
+    if (isInitialLoad.current) return;
+
     if (isAuthenticated) {
       window.location.hash = `#${currentPage}`;
     } else if (showLanding) {
@@ -73,6 +135,16 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('wapulse_active_session', activeSessionId);
   }, [activeSessionId]);
+
+  // Save theme preference to localStorage
+  useEffect(() => {
+    localStorage.setItem('wapulse_theme', isDarkMode ? 'dark' : 'light');
+  }, [isDarkMode]);
+
+  // Save language preference to localStorage
+  useEffect(() => {
+    localStorage.setItem('wapulse_language', language);
+  }, [language]);
 
   const addSession = () => {
     const newId = `user_${Date.now()}`;
@@ -126,9 +198,48 @@ const App: React.FC = () => {
     );
   }
 
-  // Show Auth Page (Login/Register/Forgot Password)
+  // Show Auth Pages (Login/Register/Forgot Password)
   if (!isAuthenticated) {
-    return <Auth onLogin={() => setIsAuthenticated(true)} language={language} />;
+    if (currentHash === 'register') {
+      return (
+        <Register
+          onRegister={() => setIsAuthenticated(true)}
+          language={language}
+          onLanguageChange={setLanguage}
+          isDarkMode={isDarkMode}
+          onThemeToggle={() => setIsDarkMode(!isDarkMode)}
+          onBackToHome={() => setShowLanding(true)}
+          onNavigateToLogin={() => window.location.hash = '#login'}
+        />
+      );
+    }
+
+    if (currentHash === 'forgot-password') {
+      return (
+        <ForgotPassword
+          language={language}
+          onLanguageChange={setLanguage}
+          isDarkMode={isDarkMode}
+          onThemeToggle={() => setIsDarkMode(!isDarkMode)}
+          onBackToHome={() => setShowLanding(true)}
+          onNavigateToLogin={() => window.location.hash = '#login'}
+        />
+      );
+    }
+
+    // Default to Login
+    return (
+      <Login
+        onLogin={() => setIsAuthenticated(true)}
+        language={language}
+        onLanguageChange={setLanguage}
+        isDarkMode={isDarkMode}
+        onThemeToggle={() => setIsDarkMode(!isDarkMode)}
+        onBackToHome={() => setShowLanding(true)}
+        onNavigateToRegister={() => window.location.hash = '#register'}
+        onNavigateToForgotPassword={() => window.location.hash = '#forgot-password'}
+      />
+    );
   }
 
   const renderContent = () => {
