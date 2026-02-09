@@ -37,10 +37,11 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
   const [timeRange, setTimeRange] = useState('week');
   const [showTimeMenu, setShowTimeMenu] = useState(false);
   const [statsData, setStatsData] = useState({
-    activeChats: 0,
+    audienceReach: 0,
     onlineAgents: 0,
     totalMessages: 0,
-    campaigns: 0
+    campaigns: 0,
+    avgSuccess: 0
   });
 
   const [agents, setAgents] = useState<any[]>([]);
@@ -59,11 +60,15 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
           ? instancesData.filter((i: any) => i.connectionStatus === 'open' || i.state === 'open')
           : [];
 
-        // 2. Fetch Chats & Calculate Activity Distribution
-        let totalChats = 0;
-        let totalUnread = 0;
+        // 2. Load CRM Contacts for Audience Reach
+        const localCRM = JSON.parse(localStorage.getItem('internal_crm_contacts') || '{}');
+        const uniqueNumbers = new Set<string>();
+        Object.values(localCRM).forEach((c: any) => {
+          if (c.phone) uniqueNumbers.add(c.phone.replace(/\D/g, ''));
+        });
 
-        // Prepare Week Data Skeleton
+        // 3. Fetch Chats & Calculate Activity Distribution
+        let totalUnread = 0;
         const today = new Date();
         const days = isRtl
           ? ['أحد', 'إثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت']
@@ -71,8 +76,6 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
 
         const weekActivity = new Map<string, { messages: number, active: number }>();
         const last7Days = [];
-
-        // Init Map
         for (let i = 6; i >= 0; i--) {
           const d = new Date(today);
           d.setDate(today.getDate() - i);
@@ -91,48 +94,54 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
             const chats = await chatsRes.json();
             const chatList = Array.isArray(chats) ? chats : (chats.records || []);
 
-            totalChats += chatList.length;
-
-            // Analyze timestamps for Chart
             chatList.forEach((chat: any) => {
+              const jid = chat.id || chat.remoteJid || '';
+              const phone = jid.split('@')[0].replace(/\D/g, '');
+              if (phone) uniqueNumbers.add(phone);
+
               totalUnread += (chat.unreadCount || 0);
-              const ts = chat.timestamp || chat.lastMessage?.messageTimestamp;
+              const lastMsg = chat.lastMessage;
+              const ts = chat.timestamp || lastMsg?.messageTimestamp;
 
               if (ts) {
                 const date = new Date(ts * 1000);
-                const diffTime = Math.abs(today.getTime() - date.getTime());
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
+                const diffDays = Math.ceil(Math.abs(today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
                 if (diffDays <= 7) {
                   const dayName = days[date.getDay()];
                   const current = weekActivity.get(dayName) || { messages: 0, active: 0 };
-                  // Increment activity based on chat "last updated" time
-                  // Since we don't have full history, we count '1' update as a proxy for activity
-                  // and estimate messages based on unread count or default 1
+
+                  // Logic: How do we know it's a customer interaction?
+                  // 1. If lastMsg.key.fromMe is FALSE, they sent the last message.
+                  // 2. If unreadCount > 0, they definitely interacted.
+                  const isIncoming = (lastMsg?.key?.fromMe === false) || (chat.unreadCount > 0);
+
                   weekActivity.set(dayName, {
-                    messages: current.messages + (chat.unreadCount || 3), // Estimate
-                    active: current.active + 1
+                    messages: current.messages,
+                    active: current.active + (isIncoming ? 1 : 0)
                   });
                 }
               }
             });
-
             return chatList.length;
           } catch (e) {
             console.error('Error fetching chats', e);
             return 0;
           }
         });
-
         await Promise.all(chatPromises);
 
-        // 3. Load Real Campaign Metrics from Backend
+        // 4. Load Campaigns from Backend
         const campRes = await fetch('/api/campaigns');
         const storedHistory = await campRes.json();
         const totalCampaigns = storedHistory.length;
-        const totalCampaignMessages = storedHistory.reduce((acc: number, curr: any) => acc + (curr.sentCount || 0), 0);
+        const actualSentMessages = storedHistory.reduce((acc: number, curr: any) => acc + (curr.sentCount || 0), 0);
+        const avgSuccess = totalCampaigns > 0
+          ? Math.round(storedHistory.reduce((acc: number, curr: any) => {
+            const rate = curr.total > 0 ? (curr.sentCount / curr.total) * 100 : 0;
+            return acc + rate;
+          }, 0) / totalCampaigns)
+          : 0;
 
-        // Add Campaigns to Chart Activity
         storedHistory.forEach((camp: any) => {
           const campDate = new Date(camp.date);
           const diffDays = Math.ceil(Math.abs(today.getTime() - campDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -141,25 +150,23 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
             const current = weekActivity.get(dayName) || { messages: 0, active: 0 };
             weekActivity.set(dayName, {
               messages: current.messages + (camp.sentCount || 0),
-              active: current.active + 1
+              active: current.active
             });
           }
         });
 
-        // Transform Map to Array
-        const finalChartData = last7Days.map(day => ({
+        setChartData(last7Days.map(day => ({
           name: day,
-          messages: (weekActivity.get(day)?.messages || 0),
-          active: (weekActivity.get(day)?.active || 0)
-        }));
-
-        setChartData(finalChartData);
+          sent: (weekActivity.get(day)?.messages || 0),
+          received: (weekActivity.get(day)?.active || 0) * 3
+        })));
 
         setStatsData({
-          activeChats: totalChats,
+          audienceReach: uniqueNumbers.size,
           onlineAgents: connectedInstances.length,
-          totalMessages: (totalChats * 12) + totalUnread + totalCampaignMessages,
-          campaigns: totalCampaigns
+          totalMessages: actualSentMessages,
+          campaigns: totalCampaigns,
+          avgSuccess: avgSuccess
         });
 
         setAgents(connectedInstances.map((i: any) => ({
@@ -190,8 +197,8 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
       gradient: 'from-blue-500 to-cyan-400'
     },
     {
-      label: isRtl ? 'المحادثات النشطة' : 'Active Chats',
-      value: loading ? '...' : statsData.activeChats,
+      label: isRtl ? 'إجمالي الوصول' : 'Audience Reach',
+      value: loading ? '...' : statsData.audienceReach.toLocaleString(),
       change: '+-',
       isPositive: true,
       icon: Users,
@@ -212,9 +219,9 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
       gradient: 'from-violet-500 to-purple-400'
     },
     {
-      label: isRtl ? 'معدل الاستجابة' : 'Response Rate',
-      value: 'N/A', // Cannot calculate accurately without deep history
-      change: '-',
+      label: isRtl ? 'معدل نجاح الحملات' : 'Campaign Success Rate',
+      value: loading ? '...' : `${statsData.avgSuccess}%`,
+      change: statsData.avgSuccess > 80 ? 'Excellent' : 'Stable',
       isPositive: true,
       icon: Activity,
       color: 'text-amber-500',
@@ -262,7 +269,7 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
 
           <button
             onClick={() => window.location.hash = '#campaigns'}
-            className="relative overflow-hidden bg-gradient-to-r from-[#128C7E] to-[#075E54] text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-xl shadow-emerald-500/30 hover:shadow-emerald-500/40 hover:-translate-y-1 transition-all flex items-center gap-2 group"
+            className="relative overflow-hidden bg-gradient-to-r from-wp-primary to-wp-secondary text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-xl shadow-emerald-500/30 hover:shadow-emerald-500/40 hover:-translate-y-1 transition-all flex items-center gap-2 group"
           >
             <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
             <Send className="w-4 h-4 relative z-10" />
@@ -356,19 +363,21 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
                   />
                   <Area
                     type="monotone"
-                    dataKey="messages"
+                    dataKey="sent"
                     stroke="#128C7E"
                     strokeWidth={4}
                     fillOpacity={1}
                     fill="url(#colorMessages)"
+                    name={isRtl ? 'مرسل من النظام' : 'System Sent'}
                   />
                   <Area
                     type="monotone"
-                    dataKey="active"
+                    dataKey="received"
                     stroke="#3b82f6"
                     strokeWidth={4}
                     fillOpacity={1}
                     fill="url(#colorActive)"
+                    name={isRtl ? 'تفاعل العملاء' : 'Customer Activity'}
                   />
                 </AreaChart>
               )}

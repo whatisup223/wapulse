@@ -1,9 +1,15 @@
-/* Standard CSS resets and custom styles */
-:root {
-    --wp-primary: #128C7E;
-    --wp-secondary: #075E54;
-    --wp-accent: #25D366;
+@import "tailwindcss";
+
+@theme {
+    --color-wp-primary: #128C7E;
+    --color-wp-secondary: #075E54;
+    --color-wp-accent: #25D366;
+    --font-sans: "Plus Jakarta Sans", "IBM Plex Sans Arabic", sans-serif;
 }
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Standard CSS resets and custom styles */
 
 body {
     font-family: 'Plus Jakarta Sans', 'IBM Plex Sans Arabic', sans-serif;
@@ -15,6 +21,19 @@ body {
 
 [dir="rtl"] {
     font-family: 'IBM Plex Sans Arabic', sans-serif;
+}
+
+/* Global Dark Mode Input Fix */
+.dark input,
+.dark textarea,
+.dark select {
+    color: #ffffff !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+    color: #94a3b8 !important;
+    /* slate-400 */
 }
 
 /* Ultra White Modern Theme */

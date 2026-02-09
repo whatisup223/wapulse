@@ -44,6 +44,12 @@ const Contacts: React.FC<ContactsProps> = ({ language }) => {
   const [formPhone, setFormPhone] = useState('');
   const [formTag, setFormTag] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [statsData, setStatsData] = useState({
+    totalAudience: 0,
+    activeChannels: 0,
+    crmCount: 0,
+    tagsCount: 0
+  });
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -95,14 +101,18 @@ const Contacts: React.FC<ContactsProps> = ({ language }) => {
           const chatsData = await chatsRes.json();
           const chatList = Array.isArray(chatsData) ? chatsData : (chatsData.records || []);
 
-          const contactsRes = await fetch(`${EVOLUTION_URL}/contact/fetchContacts/${sessionName}`, {
-            headers: { 'apikey': EVOLUTION_API_KEY }
-          }).catch(() => null);
-
           let syncContacts = [];
-          if (contactsRes && contactsRes.ok) {
-            const cData = await contactsRes.json();
-            syncContacts = Array.isArray(cData) ? cData : (cData.records || cData.data || []);
+          try {
+            const contactsRes = await fetch(`${EVOLUTION_URL}/contact/fetchContacts/${sessionName}`, {
+              headers: { 'apikey': EVOLUTION_API_KEY }
+            });
+
+            if (contactsRes.ok) {
+              const cData = await contactsRes.json();
+              syncContacts = Array.isArray(cData) ? cData : (cData.records || cData.data || []);
+            }
+          } catch (e) {
+            console.log('fetchContacts not available for this instance, using chat data instead');
           }
 
           [...chatList, ...syncContacts].forEach((item: any) => {
@@ -137,6 +147,18 @@ const Contacts: React.FC<ContactsProps> = ({ language }) => {
       }));
 
       setContacts(Array.from(allContactsMap.values()));
+
+      // Calculate Stats
+      const uniqueTags = new Set();
+      allContactsMap.forEach((c: any) => { if (c.tag) uniqueTags.add(c.tag); });
+
+      setStatsData({
+        totalAudience: allContactsMap.size,
+        activeChannels: connectedInstances.length,
+        crmCount: Object.keys(localCRM).length,
+        tagsCount: uniqueTags.size
+      });
+
     } catch (err) { console.error(err); } finally { setLoading(false); }
   };
 
@@ -206,10 +228,34 @@ const Contacts: React.FC<ContactsProps> = ({ language }) => {
           <h1 className="text-4xl font-[900] tracking-tighter text-slate-900 dark:text-white mb-2">{isRtl ? 'جهات الاتصال' : 'Contacts'}</h1>
           <p className="text-slate-500 dark:text-slate-400 font-medium">{isRtl ? 'نظام إدارة العملاء (CRM) المتكامل مع واتساب.' : 'Customer Relationship Management unified with WhatsApp.'}</p>
         </div>
-        <button onClick={() => { setFormName(''); setFormPhone(''); setFormTag(''); setShowAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3.5 rounded-2xl font-bold shadow-xl shadow-indigo-600/20 transition-all flex items-center gap-2">
-          <Plus className="w-5 h-5" />
+        <button onClick={() => { setFormName(''); setFormPhone(''); setFormTag(''); setShowAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3.5 rounded-2xl font-bold shadow-xl shadow-indigo-600/20 transition-all flex items-center gap-2 group">
+          <UserPlus className="w-5 h-5 group-hover:scale-110 transition-transform" />
           <span>{isRtl ? 'إضافة جهة' : 'Add Contact'}</span>
         </button>
+      </div>
+
+      {/* Stats Cards Section */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {[
+          { label: isRtl ? 'إجمالي الجمهور' : 'Total Audience', value: statsData.totalAudience, icon: Users, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-500/10' },
+          { label: isRtl ? 'القنوات النشطة' : 'Active Channels', value: statsData.activeChannels, icon: Phone, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-500/10' },
+          { label: isRtl ? 'سجلات CRM' : 'CRM Records', value: statsData.crmCount, icon: UserPlus, color: 'text-indigo-500', bg: 'bg-indigo-50 dark:bg-indigo-500/10' },
+          { label: isRtl ? 'التصنيفات' : 'Unique Tags', value: statsData.tagsCount, icon: TagIcon, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-500/10' },
+        ].map((stat, i) => (
+          <div key={i} className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-slate-100 dark:border-white/5 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</p>
+                <h3 className="text-2xl font-black text-slate-900 dark:text-white">
+                  {loading ? '...' : stat.value.toLocaleString()}
+                </h3>
+              </div>
+              <div className={`p-3 rounded-2xl ${stat.bg} ${stat.color}`}>
+                <stat.icon className="w-5 h-5" />
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Table Card */}

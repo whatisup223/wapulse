@@ -21,11 +21,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
 
   // Real Data States
   const [activityData, setActivityData] = useState<any[]>([]);
+  const [hourlyData, setHourlyData] = useState<any[]>([]);
   const [statsData, setStatsData] = useState({
     totalMessages: 0,
     activeAudience: 0,
-    deliveryRate: 100, // Determined by connected status
-    avgResponse: 'N/A'
+    deliveryRate: 0,
+    avgResponse: '12m',
+    audienceReach: 0
   });
 
   const [deviceData, setDeviceData] = useState<any[]>([]);
@@ -51,6 +53,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
 
         const weekActivity = new Map<string, { sent: number, received: number }>();
         const last7Days = [];
+        const hourlyBins = Array(24).fill(0).map((_, i) => ({ hour: i, count: 0 }));
+
         for (let i = 6; i >= 0; i--) {
           const d = new Date(today);
           d.setDate(today.getDate() - i);
@@ -64,7 +68,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
         let webCount = 0;
         let androidCount = 0;
 
-        // 2. Fetch Chat data if any instances connected
+        // Unified Reach Logic (CRM + WhatsApp)
+        const uniqueReach = new Set<string>();
+        const localCRM = JSON.parse(localStorage.getItem('internal_crm_contacts') || '{}');
+        Object.values(localCRM).forEach((c: any) => {
+          if (c.phone) uniqueReach.add(c.phone.replace(/\D/g, ''));
+        });
+
         if (connectedInstances.length > 0) {
           await Promise.all(connectedInstances.map(async (inst: any) => {
             try {
@@ -79,11 +89,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
               totalActiveChats += chatList.length;
 
               chatList.forEach((chat: any) => {
+                const jid = chat.id || chat.remoteJid || '';
+                const phone = jid.split('@')[0].replace(/\D/g, '');
+                if (phone) uniqueReach.add(phone);
+
                 const ts = chat.timestamp || chat.lastMessage?.messageTimestamp;
                 if (ts) {
                   const date = new Date(ts * 1000);
-                  const diffTime = Math.abs(today.getTime() - date.getTime());
-                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                  const diffDays = Math.ceil(Math.abs(today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
 
                   if (diffDays <= 7) {
                     const dayName = days[date.getDay()];
@@ -94,6 +107,12 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
                       sent: current.sent + (isFromMe ? 1 : 0),
                       received: current.received + (!isFromMe ? 1 : 0)
                     });
+
+                    // Hourly tracking for received messages
+                    if (!isFromMe) {
+                      const hr = date.getHours();
+                      hourlyBins[hr].count++;
+                    }
                   }
                 }
 
@@ -111,14 +130,15 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
           }));
         }
 
-        // 3. NEW: Load Campaigns from Backend for Analytics
         const campRes = await fetch('/api/campaigns');
         const campaigns = await campRes.json();
         let totalCampSent = 0;
+        let totalScheduled = 0;
 
         campaigns.forEach((camp: any) => {
           totalCampSent += (camp.sentCount || 0);
-          const campDate = new Date(camp.date);
+          totalScheduled += (camp.total || 0);
+          const campDate = new Date(camp.date || camp.id * 1);
           const diffDays = Math.ceil(Math.abs(today.getTime() - campDate.getTime()) / (1000 * 60 * 60 * 24));
           if (diffDays <= 7) {
             const dayName = days[campDate.getDay()];
@@ -130,32 +150,35 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
           }
         });
 
-        // Final Chart Array
-        const finalChartData = last7Days.map(day => ({
+        setActivityData(last7Days.map(day => ({
           name: day,
           sent: weekActivity.get(day)?.sent || 0,
           received: weekActivity.get(day)?.received || 0
-        }));
-        setActivityData(finalChartData);
+        })));
 
-        // Device Data
-        const totalDevices = androidCount + iosCount + webCount;
-        if (totalDevices > 0) {
-          setDeviceData([
-            { name: 'Android', value: androidCount, color: '#10b981' },
-            { name: 'iPhone', value: iosCount, color: '#3b82f6' },
-            { name: 'Web/Desktop', value: webCount, color: '#f59e0b' },
-          ].filter(d => d.value > 0));
-        } else {
-          setDeviceData([]);
-        }
+        setHourlyData(hourlyBins.map(b => ({
+          name: `${b.hour}:00`,
+          count: b.count
+        })));
+
+        // (The totalActiveChats acts as the count of threads, but uniqueReach now contains all unique humans from CRM + Chats)
+
+        const totalReceived = Array.from(weekActivity.values()).reduce((acc, curr) => acc + curr.received, 0);
+        const engagementRate = totalCampSent > 0 ? Math.round((totalReceived / totalCampSent) * 100) : 0;
 
         setStatsData({
-          totalMessages: totalActiveChats + totalCampSent,
+          totalMessages: totalCampSent,
           activeAudience: totalActiveChats,
-          deliveryRate: 100,
-          avgResponse: 'N/A'
+          deliveryRate: totalScheduled > 0 ? Math.round((totalCampSent / totalScheduled) * 100) : 0,
+          avgResponse: `${engagementRate}%`,
+          audienceReach: uniqueReach.size
         });
+
+        setDeviceData([
+          { name: isRtl ? 'iOS' : 'iOS', value: iosCount, color: '#0ea5e9' },
+          { name: isRtl ? 'الويب' : 'Web', value: webCount, color: '#8b5cf6' },
+          { name: isRtl ? 'أندرويد' : 'Android', value: androidCount, color: '#22c55e' },
+        ].filter(d => d.value > 0));
 
       } catch (err) {
         console.error('Analytics fetch error:', err);
@@ -175,10 +198,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
   };
 
   const activityStats = [
-    { label: isRtl ? 'إجمالي الرسائل' : 'Total Messages', value: statsData.totalMessages.toLocaleString(), change: '+12%', icon: MessageSquare, color: 'emerald' },
-    { label: isRtl ? 'الجمهور النشط' : 'Active Audience', value: statsData.activeAudience.toLocaleString(), change: '+5%', icon: Users, color: 'blue' },
-    { label: isRtl ? 'معدل الوصول' : 'Delivery Rate', value: `${statsData.deliveryRate}%`, change: '0%', icon: CheckCircle, color: 'purple' },
-    { label: isRtl ? 'متوسط الرد' : 'Avg Response', value: statsData.avgResponse, change: '-', icon: Clock, color: 'amber' },
+    { label: isRtl ? 'إجمالي الوصول' : 'Audience Reach', value: statsData.audienceReach.toLocaleString(), change: isRtl ? 'شخص' : 'People', icon: TrendingUp, color: 'emerald' },
+    { label: isRtl ? 'المحادثات النشطة' : 'Active Chats', value: statsData.activeAudience.toLocaleString(), change: isRtl ? 'محادثة' : 'Threads', icon: Users, color: 'blue' },
+    { label: isRtl ? 'معدل التسليم' : 'Delivery Rate', value: `${statsData.deliveryRate}%`, change: statsData.deliveryRate > 90 ? 'Excellent' : 'Stable', icon: CheckCircle, color: 'purple' },
+    { label: isRtl ? 'معدل التفاعل' : 'Engagement Rate', value: statsData.avgResponse, change: isRtl ? 'ردود' : 'Responses', icon: MessageSquare, color: 'amber' },
   ];
 
   if (loading) {
@@ -245,7 +268,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
           <div className="flex items-center justify-between mb-8">
             <div>
               <h2 className="text-xl font-900 text-slate-900 dark:text-white">
-                {isRtl ? 'معدل النشاط' : 'Activity Overview'}
+                {isRtl ? 'معدل النشاط الأسبوعي' : 'Weekly Activity'}
               </h2>
               <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
                 {isRtl ? 'الحملات والمحادثات في آخر 7 أيام' : 'Campaigns vs Chats activity in the last 7 days'}
@@ -346,9 +369,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
                 </p>
               </div>
             )}
-            <div className="absolute inset-0 flex flex-center flex-col justify-center items-center pointer-events-none">
-              <Zap className="w-8 h-8 text-emerald-500 fill-emerald-500/20" />
-            </div>
+            {deviceData.length > 0 && (
+              <div className="absolute inset-0 flex flex-center flex-col justify-center items-center pointer-events-none">
+                <Zap className="w-8 h-8 text-emerald-500 fill-emerald-500/20" />
+              </div>
+            )}
           </div>
 
           <div className="mt-8 space-y-4 flex-1">
@@ -363,6 +388,74 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Hourly Activity - FULL WIDTH BOTTOM */}
+      <div className="premium-card p-8 rounded-[32px] overflow-hidden">
+        <div className="mb-6">
+          <h2 className="text-xl font-900 text-slate-900 dark:text-white">
+            {isRtl ? 'أوقات الذروة' : 'Peak Engagement Hours'}
+          </h2>
+          <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
+            {isRtl ? 'تحليل تفصيلي لنشاط العملاء على مدار الـ 24 ساعة' : 'Detailed 24-hour customer activity timeline'}
+          </p>
+        </div>
+        <div className="h-[350px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={hourlyData} margin={{ left: 0, right: 30, top: 10, bottom: 20 }}>
+              <defs>
+                <linearGradient id="colorHours" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(203, 213, 225, 0.1)" />
+              <XAxis
+                dataKey="name"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 800 }}
+                interval={1} // Show every single hour for precision
+              />
+              <YAxis hide />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#1e293b',
+                  border: 'none',
+                  borderRadius: '12px',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 'bold',
+                  boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'
+                }}
+                itemStyle={{ color: '#f59e0b' }}
+              />
+              <Area
+                type="monotone"
+                dataKey="count"
+                stroke="#f59e0b"
+                fill="url(#colorHours)"
+                strokeWidth={4}
+                name={isRtl ? 'تفاعل العملاء' : 'Customer Activity'}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-6 p-5 bg-amber-50 dark:bg-amber-950/20 rounded-[2rem] border border-amber-100 dark:border-amber-900/10 active-pulse">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500 flex items-center justify-center text-white shadow-lg shadow-amber-500/20">
+              <Zap className="w-6 h-6" />
+            </div>
+            <div className="flex-1">
+              <h4 className="text-sm font-black text-amber-900 dark:text-amber-100">
+                {isRtl ? 'توصية النظام التسويقية' : 'System Marketing Recommendation'}
+              </h4>
+              <p className="text-xs font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+                {isRtl ? 'لتحقيق أعلى معدل تحويل، ابدأ حملتك قبل ساعة واحدة من أعلى نقطة في الشارت أعلاه.' : 'To achieve peak conversion, schedule your campaign 1 hour before the highest point shown above.'}
+              </p>
+            </div>
           </div>
         </div>
       </div>

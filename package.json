@@ -11,6 +11,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@tailwindcss/vite": "^4.1.18",
     "@types/qrcode.react": "^1.0.5",
     "axios": "^1.13.5",
     "body-parser": "^2.2.2",

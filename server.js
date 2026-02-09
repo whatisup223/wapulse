@@ -40,105 +40,114 @@ async function processQueue() {
         const campaigns = db.data.campaigns;
 
         const now = new Date();
+        // Priority 1: Current active campaigns
+        // Priority 2: Scheduled campaigns that reached their time
         const activeCampaign = campaigns.find(c => {
             if (c.status === 'in_progress') return true;
-            if (c.status === 'scheduled') {
+            if (c.status === 'scheduled' && c.scheduledAt) {
                 const scheduledTime = new Date(c.scheduledAt);
                 return scheduledTime <= now;
             }
             return false;
         });
 
-        if (activeCampaign) {
-            if (activeCampaign.status === 'scheduled') {
-                activeCampaign.status = 'in_progress';
-                await db.write();
-            }
+        if (!activeCampaign) {
+            isProcessing = false;
+            return;
+        }
 
-            const nextRecipient = activeCampaign.recipientsList.find(r => r.status === 'pending');
+        // Auto-start scheduled campaign
+        if (activeCampaign.status === 'scheduled') {
+            console.log(`Starting scheduled campaign: ${activeCampaign.name}`);
+            activeCampaign.status = 'in_progress';
+            await db.write();
+        }
 
-            if (nextRecipient) {
-                // Account Rotation Logic
-                let sender = activeCampaign.senderInstance;
+        const nextRecipient = activeCampaign.recipientsList.find(r => r.status === 'pending');
 
-                if (sender === 'all') {
-                    // Fetch open instances
-                    try {
-                        const instancesRes = await axios.get(`${EVOLUTION_URL}/instance/fetchInstances`, {
-                            headers: { 'apikey': EVOLUTION_API_KEY }
-                        });
-                        const openInstances = instancesRes.data.filter(i => i.connectionStatus === 'open' || i.state === 'open');
+        if (nextRecipient) {
+            let sender = activeCampaign.senderInstance;
 
-                        if (openInstances.length === 0) {
-                            throw new Error("No online instances available for rotation");
-                        }
-
-                        // Check if we need to rotate
-                        if (!activeCampaign.currentSender || (activeCampaign.sentSinceRotation || 0) >= (activeCampaign.rotationCount || 5)) {
-                            // Pick a random instance from the pool
-                            const randomIndex = Math.floor(Math.random() * openInstances.length);
-                            activeCampaign.currentSender = openInstances[randomIndex].instanceName || openInstances[randomIndex].name;
-                            activeCampaign.sentSinceRotation = 0;
-                            console.log(`Rotating account for campaign ${activeCampaign.name} to: ${activeCampaign.currentSender}`);
-                        }
-
-                        sender = activeCampaign.currentSender;
-                    } catch (e) {
-                        console.error("Rotation Error:", e.message);
-                        isProcessing = false;
-                        return; // Wait for next cycle
-                    }
-                }
-
+            // Rotation Logic
+            if (sender === 'all') {
                 try {
-                    const response = await axios.post(`${EVOLUTION_URL}/message/sendText/${sender}`, {
-                        number: nextRecipient.number,
-                        text: activeCampaign.message
-                    }, {
+                    const instancesRes = await axios.get(`${EVOLUTION_URL}/instance/fetchInstances`, {
                         headers: { 'apikey': EVOLUTION_API_KEY }
                     });
+                    const openInstances = (instancesRes.data || []).filter(i => i.connectionStatus === 'open' || i.state === 'open');
 
-                    if (response.status === 200 || response.status === 201) {
-                        nextRecipient.status = 'sent';
-                        activeCampaign.sentCount++;
-                        if (activeCampaign.senderInstance === 'all') {
-                            activeCampaign.sentSinceRotation = (activeCampaign.sentSinceRotation || 0) + 1;
-                        }
-                    } else {
-                        nextRecipient.status = 'failed';
-                        activeCampaign.failedCount++;
+                    if (openInstances.length === 0) {
+                        throw new Error("No online instances available for rotation");
                     }
-                } catch (error) {
-                    console.error(`Failed to send to ${nextRecipient.number}:`, error.message);
+
+                    if (!activeCampaign.currentSender || (activeCampaign.sentSinceRotation || 0) >= (activeCampaign.rotationCount || 5)) {
+                        const randomIndex = Math.floor(Math.random() * openInstances.length);
+                        activeCampaign.currentSender = openInstances[randomIndex].instanceName || openInstances[randomIndex].name;
+                        activeCampaign.sentSinceRotation = 0;
+                        console.log(`Rotating sender to: ${activeCampaign.currentSender}`);
+                    }
+                    sender = activeCampaign.currentSender;
+                } catch (e) {
+                    console.error("Rotation Error:", e.message);
+                    isProcessing = false;
+                    return;
+                }
+            }
+
+            // Sending
+            try {
+                const response = await axios.post(`${EVOLUTION_URL}/message/sendText/${sender}`, {
+                    number: nextRecipient.number,
+                    text: activeCampaign.message
+                }, {
+                    headers: { 'apikey': EVOLUTION_API_KEY }
+                });
+
+                if (response.status === 200 || response.status === 201) {
+                    nextRecipient.status = 'sent';
+                    activeCampaign.sentCount++;
+                    if (activeCampaign.senderInstance === 'all') {
+                        activeCampaign.sentSinceRotation = (activeCampaign.sentSinceRotation || 0) + 1;
+                    }
+                } else {
                     nextRecipient.status = 'failed';
                     activeCampaign.failedCount++;
-                    // If instance fails, force a rotation next time
-                    if (activeCampaign.senderInstance === 'all') {
-                        activeCampaign.currentSender = null;
-                    }
                 }
-
-                activeCampaign.current++;
-
-                if (activeCampaign.current >= activeCampaign.total) {
-                    activeCampaign.status = activeCampaign.failedCount === 0 ? 'sent' : 'partial';
-                }
-
-                await db.write();
-
-                const waitTime = Math.floor(Math.random() * (activeCampaign.maxDelay - activeCampaign.minDelay + 1) + activeCampaign.minDelay) * 1000;
-                setTimeout(() => { isProcessing = false; processQueue(); }, waitTime);
-                return;
-            } else {
-                activeCampaign.status = activeCampaign.failedCount === 0 ? 'sent' : 'partial';
-                await db.write();
+            } catch (error) {
+                console.error(`Send failure to ${nextRecipient.number}:`, error.message);
+                nextRecipient.status = 'failed';
+                activeCampaign.failedCount++;
+                if (activeCampaign.senderInstance === 'all') activeCampaign.currentSender = null;
             }
+
+            activeCampaign.current = activeCampaign.recipientsList.filter(r => r.status !== 'pending').length;
+
+            // Final Status Check - Based on actual pending list, not just counter
+            const stillPending = activeCampaign.recipientsList.some(r => r.status === 'pending');
+            if (!stillPending) {
+                console.log(`Campaign ${activeCampaign.name} finished.`);
+                activeCampaign.status = activeCampaign.failedCount === 0 ? 'sent' : 'partial';
+            }
+
+            await db.write();
+
+            // Intelligent delay before next message in THIS process
+            const waitTime = Math.floor(Math.random() * (activeCampaign.maxDelay - activeCampaign.minDelay + 1) + activeCampaign.minDelay) * 1000;
+            setTimeout(() => {
+                isProcessing = false;
+                processQueue();
+            }, waitTime);
+
+        } else {
+            // No recipients left but status was in_progress
+            activeCampaign.status = activeCampaign.failedCount === 0 ? 'sent' : 'partial';
+            await db.write();
+            isProcessing = false;
         }
     } catch (err) {
-        console.error("Queue Processor Error:", err);
+        console.error("Queue Processor Fatal Error:", err);
+        isProcessing = false;
     }
-
-    isProcessing = false;
 }
 
 // Run queue processor every 5 seconds to check for work
