@@ -4,7 +4,7 @@ import { Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft } from 'lucide-react';
 import AuthLayout from '../components/AuthLayout';
 
 interface LoginProps {
-    onLogin: () => void;
+    onLogin: (userData: any) => void;
     language: 'en' | 'ar';
     onLanguageChange: (lang: 'en' | 'ar') => void;
     isDarkMode: boolean;
@@ -26,6 +26,36 @@ const Login: React.FC<LoginProps> = ({
 }) => {
     const isRtl = language === 'ar';
     const [showPassword, setShowPassword] = useState(false);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setIsLoading(true);
+        setError('');
+
+        try {
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+
+            const data = await res.json();
+
+            if (data.success) {
+                onLogin(data.user);
+            } else {
+                setError(data.message || (isRtl ? 'بيانات الدخول غير صحيحة' : 'Invalid credentials'));
+            }
+        } catch (err) {
+            setError(isRtl ? 'فشل الاتصال بالسيرفر' : 'Failed to connect to server');
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     return (
         <AuthLayout
@@ -45,13 +75,21 @@ const Login: React.FC<LoginProps> = ({
                     </p>
                 </div>
 
-                <form onSubmit={(e) => { e.preventDefault(); onLogin(); }} className="space-y-6">
+                {error && (
+                    <div className="bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 p-4 rounded-xl text-red-600 dark:text-red-400 text-sm font-bold animate-shake">
+                        {error}
+                    </div>
+                )}
+
+                <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-1">
                         <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 ml-1">{isRtl ? 'البريد الإلكتروني' : 'Email Address'}</label>
                         <div className="relative">
                             <Mail className={`absolute ${isRtl ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400`} />
                             <input
                                 type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
                                 className={`w-full bg-slate-100 dark:bg-slate-800 border-none rounded-xl ${isRtl ? 'pr-11 pl-4' : 'pl-11 pr-4'} py-3 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-[#128C7E] transition-all`}
                                 placeholder="name@company.com"
                                 required
@@ -74,6 +112,8 @@ const Login: React.FC<LoginProps> = ({
                             <Lock className={`absolute ${isRtl ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400`} />
                             <input
                                 type={showPassword ? 'text' : 'password'}
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
                                 className={`w-full bg-slate-100 dark:bg-slate-800 border-none rounded-xl ${isRtl ? 'pr-11 pl-12' : 'pl-11 pr-12'} py-3 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-[#128C7E] transition-all`}
                                 placeholder="••••••••"
                                 required
@@ -90,10 +130,17 @@ const Login: React.FC<LoginProps> = ({
 
                     <button
                         type="submit"
-                        className="w-full bg-[#128C7E] hover:bg-[#075E54] text-white py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 group"
+                        disabled={isLoading}
+                        className="w-full bg-[#128C7E] hover:bg-[#075E54] text-white py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 group disabled:opacity-70"
                     >
-                        {isRtl ? 'تسجيل الدخول' : 'Sign In'}
-                        {isRtl ? <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" /> : <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />}
+                        {isLoading ? (
+                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                            <>
+                                {isRtl ? 'تسجيل الدخول' : 'Sign In'}
+                                {isRtl ? <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" /> : <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />}
+                            </>
+                        )}
                     </button>
                 </form>
 

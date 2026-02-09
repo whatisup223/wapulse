@@ -28,13 +28,22 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('wapulse_theme');
     return saved === 'dark';
   });
+
+  const [user, setUser] = useState<any>(() => {
+    const saved = localStorage.getItem('wapulse_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+
   const [language, setLanguage] = useState<'en' | 'ar'>(() => {
     const saved = localStorage.getItem('wapulse_language');
     return (saved === 'ar' || saved === 'en') ? saved : 'en';
   });
 
-  // Initialize auth state based on URL hash to prevent flash
+  // Initialize auth state
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    const savedUser = localStorage.getItem('wapulse_user');
+    if (!savedUser) return false;
+
     const hash = window.location.hash.slice(1) || 'landing';
     const validPages: Page[] = ['dashboard', 'inbox', 'campaigns', 'create-campaign', 'contacts', 'connection', 'analytics', 'settings'];
     return validPages.includes(hash as Page);
@@ -146,6 +155,12 @@ const App: React.FC = () => {
     localStorage.setItem('wapulse_theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
+  // Save user info to localStorage
+  useEffect(() => {
+    if (user) localStorage.setItem('wapulse_user', JSON.stringify(user));
+    else localStorage.removeItem('wapulse_user');
+  }, [user]);
+
   // Save language preference to localStorage
   useEffect(() => {
     localStorage.setItem('wapulse_language', language);
@@ -208,7 +223,10 @@ const App: React.FC = () => {
     if (currentHash === 'register') {
       return (
         <Register
-          onRegister={() => setIsAuthenticated(true)}
+          onRegister={(userData) => {
+            setUser(userData);
+            setIsAuthenticated(true);
+          }}
           language={language}
           onLanguageChange={setLanguage}
           isDarkMode={isDarkMode}
@@ -235,7 +253,10 @@ const App: React.FC = () => {
     // Default to Login
     return (
       <Login
-        onLogin={() => setIsAuthenticated(true)}
+        onLogin={(userData) => {
+          setUser(userData);
+          setIsAuthenticated(true);
+        }}
         language={language}
         onLanguageChange={setLanguage}
         isDarkMode={isDarkMode}
@@ -265,7 +286,16 @@ const App: React.FC = () => {
         />
       );
       case 'analytics': return <Analytics language={language} />;
-      case 'settings': return <Settings language={language} />;
+      case 'settings': return (
+        <Settings
+          language={language}
+          user={user}
+          onProfileUpdate={(updatedUser) => setUser(updatedUser)}
+          isDarkMode={isDarkMode}
+          onThemeChange={setIsDarkMode}
+          onLanguageChange={setLanguage}
+        />
+      );
       default: return <Dashboard language={language} />;
     }
   };
@@ -292,7 +322,12 @@ const App: React.FC = () => {
           setIsDarkMode={setIsDarkMode}
           language={language}
           setLanguage={setLanguage}
-          onLogout={() => setIsAuthenticated(false)}
+          userName={user?.name || 'User'}
+          userRole={user?.role || 'User'}
+          onLogout={() => {
+            setIsAuthenticated(false);
+            setUser(null);
+          }}
           onMenuClick={() => setIsMobileSidebarOpen(true)}
         />
 

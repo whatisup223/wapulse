@@ -21,6 +21,10 @@ import { QRCodeSVG } from 'qrcode.react';
 interface ConnectionProps {
   language: 'en' | 'ar';
   userId: string;
+  sessions: string[];
+  onAddSession: () => void;
+  onSwitchSession: (id: string) => void;
+  onRemoveSession: (id: string) => void;
 }
 
 interface Instance {
@@ -282,14 +286,14 @@ const Connection: React.FC<ConnectionProps> = ({ language, userId }) => {
                   key={`${inst.instanceName}-${idx}`}
                   onClick={() => setSelectedInstance(inst)}
                   className={`group p-4 rounded-[1.5rem] border cursor-pointer transition-all relative ${selectedInstance?.instanceName === inst.instanceName
-                      ? 'bg-white dark:bg-slate-800 border-emerald-500 shadow-lg shadow-emerald-500/10 scale-[1.02]'
-                      : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-white/5 hover:border-emerald-200 dark:hover:border-emerald-500/30'
+                    ? 'bg-white dark:bg-slate-800 border-emerald-500 shadow-lg shadow-emerald-500/10 scale-[1.02]'
+                    : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-white/5 hover:border-emerald-200 dark:hover:border-emerald-500/30'
                     }`}
                 >
                   <div className="flex items-center gap-4">
                     <div className={`w-12 h-12 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0 ${inst.connectionStatus === 'open'
-                        ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20'
-                        : 'bg-slate-100 text-slate-400 dark:bg-slate-800'
+                      ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20'
+                      : 'bg-slate-100 text-slate-400 dark:bg-slate-800'
                       }`}>
                       {inst.profilePicUrl ? (
                         <img src={inst.profilePicUrl} alt={inst.instanceName} className="w-full h-full object-cover" />
@@ -335,8 +339,8 @@ const Connection: React.FC<ConnectionProps> = ({ language, userId }) => {
                   <h2 className="text-2xl font-[900] text-slate-900 dark:text-white flex items-center gap-2">
                     {selectedInstance.instanceName}
                     <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${selectedInstance.connectionStatus === 'open'
-                        ? 'bg-emerald-100 text-emerald-600'
-                        : 'bg-amber-100 text-amber-600'
+                      ? 'bg-emerald-100 text-emerald-600'
+                      : 'bg-amber-100 text-amber-600'
                       }`}>
                       {selectedInstance.connectionStatus === 'open' ? 'Online' : 'Offline'}
                     </span>

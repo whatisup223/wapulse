@@ -19,11 +19,206 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // Database Initialization
-const defaultData = { campaigns: [], contacts: [], settings: {} };
+const defaultData = {
+    campaigns: [],
+    contacts: [],
+    settings: {},
+    users: [
+        {
+            id: 'admin_1',
+            email: 'admin@marketation.sa',
+            password: 'password123',
+            name: 'A. Mansour',
+            role: 'Administrator'
+        }
+    ]
+};
 const db = await JSONFilePreset('db.json', defaultData);
+
+// Ensure users and settings exist if loading an old db.json
+await db.read();
+db.data = db.data || defaultData;
+if (!db.data.users) db.data.users = defaultData.users;
+if (!db.data.settings) db.data.settings = defaultData.settings;
+await db.write();
 
 const EVOLUTION_URL = process.env.VITE_EVOLUTION_URL;
 const EVOLUTION_API_KEY = process.env.VITE_EVOLUTION_API_KEY;
+
+// ---------------------------------------------------------
+// Auth & User Logic
+// ---------------------------------------------------------
+
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        await db.read();
+        const { email, password } = req.body;
+        console.log('--- LOGIN ATTEMPT ---');
+        console.log('Email:', email);
+
+        if (!db.data) {
+            console.error('CRITICAL: db.data is null or undefined!');
+            return res.status(500).json({ success: false, message: 'خطأ في تهيئة قاعدة البيانات' });
+        }
+
+        const users = db.data.users || [];
+        console.log('Available usersCount:', users.length);
+
+        const user = users.find(u =>
+            u.email && u.password &&
+            u.email.toLowerCase().trim() === email.toLowerCase().trim() &&
+            u.password === password
+        );
+
+        if (user) {
+            console.log('LOGIN SUCCESS for:', email);
+            const { password: _, ...userInfo } = user;
+            res.json({ success: true, user: userInfo });
+        } else {
+            console.log('LOGIN FAILED: No match for', email);
+            res.status(401).json({ success: false, message: 'بيانات الدخول غير صحيحة' });
+        }
+    } catch (err) {
+        console.error('INTERNAL SERVER ERROR DURING LOGIN:', err);
+        res.status(500).json({
+            success: false,
+            message: 'حدث خطأ داخلي في الخادم',
+            error: err.message
+        });
+    }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        await db.read();
+        const { name, email, password } = req.body;
+
+        // Basic validation
+        if (!name || !email || !password) {
+            return res.status(400).json({ success: false, message: 'يرجى إكمال جميع الحقول' });
+        }
+
+        // Check if user exists
+        const exists = db.data.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+        if (exists) {
+            return res.status(400).json({ success: false, message: 'البريد الإلكتروني مسجل بالفعل' });
+        }
+
+        const newUser = {
+            id: 'user_' + Date.now(),
+            name,
+            email,
+            password,
+            role: 'User'
+        };
+
+        db.data.users.push(newUser);
+        await db.write();
+
+        const { password: _, ...userInfo } = newUser;
+        res.status(201).json({ success: true, user: userInfo });
+    } catch (err) {
+        console.error('Registration Error:', err);
+        res.status(500).json({ success: false, message: 'حدث خطأ في الخادم' });
+    }
+});
+
+app.post('/api/auth/change-password', async (req, res) => {
+    try {
+        await db.read();
+        const { userId, currentPassword, newPassword } = req.body;
+
+        const user = db.data.users.find(u => u.id === userId);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
+        }
+
+        if (user.password !== currentPassword) {
+            return res.status(401).json({ success: false, message: 'كلمة المرور الحالية غير صحيحة' });
+        }
+
+        user.password = newPassword;
+        await db.write();
+
+        res.json({ success: true, message: 'تم تغيير كلمة المرور بنجاح' });
+    } catch (err) {
+        console.error('Password Change Error:', err);
+        res.status(500).json({ success: false, message: 'حدث خطأ في الخادم' });
+    }
+});
+
+
+app.post('/api/settings/profile', async (req, res) => {
+    await db.read();
+    const { name, email, userId } = req.body;
+
+    const user = db.data.users.find(u => u.id === userId);
+    if (user) {
+        user.name = name;
+        user.email = email;
+        await db.write();
+        res.json({ success: true, user });
+    } else {
+        res.status(404).json({ success: false });
+    }
+});
+
+// ---------------------------------------------------------
+// Evolution API Webhook Receiver
+// ---------------------------------------------------------
+
+app.post('/api/webhooks/evolution', (req, res) => {
+    try {
+        const { event, instance, data } = req.body;
+
+        console.log('='.repeat(60));
+        console.log('📩 Evolution Webhook Received');
+        console.log('Event:', event);
+        console.log('Instance:', instance);
+        console.log('Data:', JSON.stringify(data, null, 2));
+        console.log('='.repeat(60));
+
+        // Handle different events
+        switch (event) {
+            case 'messages.upsert':
+                console.log('✉️ New message received');
+                // TODO: Send to WebSocket clients or update database
+                break;
+
+            case 'messages.update':
+                console.log('📝 Message updated');
+                break;
+
+            case 'chats.upsert':
+                console.log('💬 New chat created');
+                break;
+
+            case 'chats.update':
+                console.log('💬 Chat updated');
+                break;
+
+            case 'contacts.upsert':
+                console.log('👤 New contact added');
+                break;
+
+            case 'connection.update':
+                console.log('🔌 Connection status changed');
+                break;
+
+            default:
+                console.log('ℹ️ Other event:', event);
+        }
+
+        // Always respond with 200 to acknowledge receipt
+        res.status(200).json({ success: true, received: true });
+
+    } catch (error) {
+        console.error('❌ Webhook Error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 
 // ---------------------------------------------------------
 // Background Worker Logic
@@ -192,6 +387,19 @@ app.post('/api/campaigns', async (req, res) => {
     await db.write();
 
     res.status(201).json(newCampaign);
+});
+
+// Settings Endpoints
+app.get('/api/settings', async (req, res) => {
+    await db.read();
+    res.json(db.data.settings || {});
+});
+
+app.post('/api/settings', async (req, res) => {
+    const newSettings = req.body;
+    db.data.settings = { ...db.data.settings, ...newSettings };
+    await db.write();
+    res.json({ success: true, settings: db.data.settings });
 });
 
 // Delete campaign

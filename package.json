@@ -1,40 +1,38 @@
 {
   "name": "wapulse-saas-dashboard",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "version": "1.0.0",
+  "description": "WaPulse - WhatsApp Marketing Dashboard",
+  "main": "server.js",
   "scripts": {
     "dev": "vite",
-    "server": "node server.js",
     "build": "vite build",
-    "start": "node server.js",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "node server.js",
+    "start": "node server.js"
   },
   "dependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
-    "@tailwindcss/vite": "^4.1.18",
-    "@types/qrcode.react": "^1.0.5",
-    "axios": "^1.13.5",
-    "body-parser": "^2.2.2",
-    "cors": "^2.8.6",
+    "axios": "^1.7.9",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.4",
-    "express": "^5.2.1",
-    "lodash": "^4.17.23",
+    "express": "^4.21.2",
     "lowdb": "^7.0.1",
-    "lucide-react": "^0.563.0",
-    "node-cron": "^4.2.1",
-    "qrcode.react": "^4.2.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "recharts": "^3.7.0"
+    "lucide-react": "^0.469.0",
+    "node-cron": "^3.0.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "autoprefixer": "^10.4.24",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.18",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.6.2",
+    "vite": "^6.4.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

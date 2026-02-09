@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, MoreVertical, Send, Paperclip, Smile, CheckCheck, MessageSquare, ChevronLeft, User as UserIcon, Loader2, AlertCircle, RefreshCw, Phone, Video, PanelLeftClose, PanelLeftOpen, ArrowLeft, ChevronDown, Smartphone } from 'lucide-react';
+import { sendNewMessageNotification, checkNotificationSettings } from '../utils/notifications';
 
 interface InboxProps {
   language: 'en' | 'ar';
+  userId: string;
 }
 
 interface EvolutionChat {
@@ -63,6 +65,18 @@ const Inbox: React.FC<InboxProps> = ({ language }) => {
 
   // New State for Collapsible Sidebar
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Notification State
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+
+  // Check notification settings on mount
+  useEffect(() => {
+    const checkSettings = async () => {
+      const enabled = await checkNotificationSettings();
+      setNotificationsEnabled(enabled);
+    };
+    checkSettings();
+  }, []);
 
   const jidToIdentity = useRef<Map<string, string>>(new Map());
   const identityToJids = useRef<Map<string, Set<string>>>(new Map());
@@ -316,6 +330,37 @@ const Inbox: React.FC<InboxProps> = ({ language }) => {
         .sort((a, b) => a.timestamp - b.timestamp);
 
       if (currentChatIdRef.current === primaryChatId) {
+        // Check for new messages and send notification
+        if (isPolling && notificationsEnabled) {
+          const previousMessageCount = messages.length;
+          const newMessageCount = sortedMessages.length;
+
+          if (newMessageCount > previousMessageCount) {
+            // Get the new messages
+            const newMessages = sortedMessages.slice(previousMessageCount);
+
+            // Send notification for each new message from customer (not from me)
+            newMessages.forEach(msg => {
+              if (!msg.fromMe) {
+                // Find the chat to get sender name
+                const chat = chats.find(c => {
+                  const identityKey = jidToIdentity.current.get(c.id.toLowerCase().trim());
+                  const allJids = Array.from(identityToJids.current.get(identityKey || '') || [c.id]);
+                  return allJids.some(jid => jid === msg.chatId);
+                });
+
+                if (chat) {
+                  sendNewMessageNotification(
+                    chat.name,
+                    msg.body,
+                    language
+                  );
+                }
+              }
+            });
+          }
+        }
+
         setMessages(sortedMessages);
       }
     } catch (err) {
@@ -336,7 +381,8 @@ const Inbox: React.FC<InboxProps> = ({ language }) => {
 
   useEffect(() => {
     if (!currentSession) return;
-    const chatInterval = setInterval(() => fetchChats(false), 8000);
+    // Refresh chat list every 15 seconds (reduced from 8 seconds)
+    const chatInterval = setInterval(() => fetchChats(false), 15000);
     return () => clearInterval(chatInterval);
   }, [currentSession, fetchChats]);
 
@@ -344,7 +390,8 @@ const Inbox: React.FC<InboxProps> = ({ language }) => {
     if (selectedChatId && currentSession) {
       setMessageText('');
       fetchMessages(selectedChatId);
-      const msgInterval = setInterval(() => fetchMessages(selectedChatId, true), 5000);
+      // Refresh messages every 10 seconds (reduced from 5 seconds)
+      const msgInterval = setInterval(() => fetchMessages(selectedChatId, true), 10000);
       return () => clearInterval(msgInterval);
     }
   }, [selectedChatId, fetchMessages, currentSession]);
