@@ -19,12 +19,12 @@ const Campaigns: React.FC<CampaignsProps> = ({ language }) => {
     { id: 5, name: 'Loyalty Program', recipients: 250, status: 'sent', date: '2023-10-22 15:30', type: 'Marketing' },
   ]);
 
-  const filteredCampaigns = activeTab === 'all' 
-    ? campaigns 
+  const filteredCampaigns = activeTab === 'all'
+    ? campaigns
     : campaigns.filter(c => c.status === activeTab || (activeTab === 'active' && ['pending', 'scheduled'].includes(c.status)));
 
   const getStatusStyle = (status: string) => {
-    switch(status) {
+    switch (status) {
       case 'sent': return 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400';
       case 'pending': return 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400';
       case 'scheduled': return 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400';
@@ -40,7 +40,7 @@ const Campaigns: React.FC<CampaignsProps> = ({ language }) => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-2xl shadow-2xl border dark:border-slate-800 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b dark:border-slate-800 flex justify-between items-center">
-              <h3 className="text-xl font-bold dark:text-white">{isRtl ? 'إنشاء حملة جديدة' : 'Create New Campaign'}</h3>
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white">{isRtl ? 'إنشاء حملة جديدة' : 'Create New Campaign'}</h3>
               <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X /></button>
             </div>
             <div className="p-6 space-y-4">
@@ -63,7 +63,7 @@ const Campaigns: React.FC<CampaignsProps> = ({ language }) => {
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold dark:text-white">{isRtl ? 'حملات واتساب' : 'WhatsApp Campaigns'}</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{isRtl ? 'حملات واتساب' : 'WhatsApp Campaigns'}</h1>
           <p className="text-slate-500 dark:text-slate-400">{isRtl ? 'إدارة وجدولة حملاتك الإعلانية بسهولة' : 'Manage and schedule your marketing campaigns with ease.'}</p>
         </div>
         <button onClick={() => setShowCreateModal(true)} className="bg-[#128C7E] hover:bg-[#075E54] text-white px-6 py-2.5 rounded-xl font-semibold shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2">
@@ -76,7 +76,7 @@ const Campaigns: React.FC<CampaignsProps> = ({ language }) => {
         <div className="p-4 border-b dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-2 p-1 bg-slate-50 dark:bg-slate-800 rounded-xl w-fit">
             {['all', 'active', 'sent', 'failed'].map((tab) => (
-              <button 
+              <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all capitalize ${activeTab === tab ? 'bg-white dark:bg-slate-700 shadow-sm text-[#128C7E]' : 'text-slate-500 hover:text-slate-700'}`}

@@ -10,7 +10,7 @@ const Settings: React.FC<SettingsProps> = ({ language }) => {
   const isRtl = language === 'ar';
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  
+
   const [config, setConfig] = useState({
     darkMode: false,
     readReceipts: true,
@@ -35,7 +35,7 @@ const Settings: React.FC<SettingsProps> = ({ language }) => {
   ];
 
   const Toggle = ({ active, onToggle }: { active: boolean, onToggle: () => void }) => (
-    <div 
+    <div
       onClick={onToggle}
       className={`w-12 h-6 rounded-full relative cursor-pointer p-1 transition-colors duration-200 ${active ? 'bg-[#128C7E]' : 'bg-slate-300 dark:bg-slate-700'}`}
     >
@@ -53,7 +53,7 @@ const Settings: React.FC<SettingsProps> = ({ language }) => {
       )}
 
       <div>
-        <h1 className="text-2xl font-bold dark:text-white">{isRtl ? 'الإعدادات' : 'Settings'}</h1>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{isRtl ? 'الإعدادات' : 'Settings'}</h1>
         <p className="text-slate-500 dark:text-slate-400">{isRtl ? 'تخصيص تجربتك وإدارة تكوين النظام' : 'Personalize your experience and manage system configuration.'}</p>
       </div>
 
@@ -67,15 +67,15 @@ const Settings: React.FC<SettingsProps> = ({ language }) => {
       </div>
 
       <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border dark:border-slate-800 shadow-sm space-y-8">
-        <h3 className="font-bold text-lg dark:text-white">{isRtl ? 'الإعدادات العامة' : 'General Configuration'}</h3>
-        
+        <h3 className="font-bold text-lg text-slate-900 dark:text-white">{isRtl ? 'الإعدادات العامة' : 'General Configuration'}</h3>
+
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               <p className="text-sm font-semibold dark:text-slate-200">{isRtl ? 'تأكيد القراءة' : 'Read Receipts'}</p>
               <p className="text-xs text-slate-500">{isRtl ? 'إرسال واستقبال علامات الصح الزرقاء' : 'Send and receive double blue checkmarks.'}</p>
             </div>
-            <Toggle active={config.readReceipts} onToggle={() => setConfig({...config, readReceipts: !config.readReceipts})} />
+            <Toggle active={config.readReceipts} onToggle={() => setConfig({ ...config, readReceipts: !config.readReceipts })} />
           </div>
 
           <hr className="dark:border-slate-800" />
@@ -85,7 +85,7 @@ const Settings: React.FC<SettingsProps> = ({ language }) => {
               <p className="text-sm font-semibold dark:text-slate-200">{isRtl ? 'الرد الآلي' : 'Auto Reply'}</p>
               <p className="text-xs text-slate-500">{isRtl ? 'تفعيل الرد التلقائي خارج ساعات العمل' : 'Enable automated replies outside business hours.'}</p>
             </div>
-            <Toggle active={config.autoReply} onToggle={() => setConfig({...config, autoReply: !config.autoReply})} />
+            <Toggle active={config.autoReply} onToggle={() => setConfig({ ...config, autoReply: !config.autoReply })} />
           </div>
 
           <hr className="dark:border-slate-800" />
@@ -95,13 +95,13 @@ const Settings: React.FC<SettingsProps> = ({ language }) => {
               <p className="text-sm font-semibold dark:text-slate-200">{isRtl ? 'إشعارات النظام' : 'System Notifications'}</p>
               <p className="text-xs text-slate-500">{isRtl ? 'استقبال تنبيهات عند استلام رسائل جديدة' : 'Get notified when new messages arrive.'}</p>
             </div>
-            <Toggle active={config.notifications} onToggle={() => setConfig({...config, notifications: !config.notifications})} />
+            <Toggle active={config.notifications} onToggle={() => setConfig({ ...config, notifications: !config.notifications })} />
           </div>
         </div>
 
         <div className="pt-4 flex justify-end gap-3">
           <button className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-500 hover:bg-slate-100 transition-colors">{isRtl ? 'إلغاء' : 'Cancel'}</button>
-          <button 
+          <button
             onClick={handleSave}
             disabled={isSaving}
             className="bg-[#128C7E] hover:bg-[#075E54] text-white px-8 py-2.5 rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2 disabled:opacity-70"

@@ -38,7 +38,7 @@ export interface Campaign {
   scheduledAt?: string;
 }
 
-export interface WahaSession {
+export interface EvolutionSession {
   name: string;
   status: 'STOPPED' | 'STARTING' | 'SCAN_QR' | 'WORKING' | 'FAILED';
   config?: any;

@@ -73,7 +73,7 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
               </div>
             </div>
             <h3 className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">{stat.label}</h3>
-            <p className="text-3xl font-[900] dark:text-white tracking-tighter">{stat.value}</p>
+            <p className="text-3xl font-[900] text-slate-900 dark:text-white tracking-tighter">{stat.value}</p>
           </div>
         ))}
       </div>
@@ -82,7 +82,7 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
         <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-white/5">
           <div className="flex items-center justify-between mb-12">
             <div>
-              <h3 className="font-black text-xs uppercase tracking-[0.2em] dark:text-white">{isRtl ? 'تحليل حجم الرسائل' : 'Message Analysis'}</h3>
+              <h3 className="font-black text-xs uppercase tracking-[0.2em] text-slate-900 dark:text-white">{isRtl ? 'تحليل حجم الرسائل' : 'Message Analysis'}</h3>
               <p className="text-[10px] text-slate-400 mt-1 font-bold">Past 7 days performance</p>
             </div>
             <div className="flex gap-4">
@@ -133,7 +133,7 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
           </div>
 
           <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-white/5">
-            <h3 className="font-black text-[10px] uppercase tracking-[0.2em] mb-6 dark:text-white">Active Agents</h3>
+            <h3 className="font-black text-[10px] uppercase tracking-[0.2em] mb-6 text-slate-900 dark:text-white">Active Agents</h3>
             <div className="flex -space-x-3">
               {[1, 2, 3, 4].map(i => (
                 <img key={i} src={`https://picsum.photos/seed/a${i}/100/100`} className="w-10 h-10 rounded-2xl border-4 border-white dark:border-slate-900 object-cover" />
