@@ -175,7 +175,9 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     const sessionName = currentSession.instanceName;
 
     if (isManualSync) setSyncing(true);
-    else if (!isManualSync && chats.length === 0) setLoadingChats(true);
+
+    // Only show full-screen loader if we have no chats and it's not a background sync
+    setLoadingChats(prev => !isManualSync && chats.length === 0 ? true : prev);
 
     try {
       // Use local API: Handles caching and sync automatically
@@ -194,7 +196,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
       setLoadingChats(false);
       setSyncing(false);
     }
-  }, [currentSession, chats.length]); // Added chats.length to dependencies for the `chats.length === 0` check
+  }, [currentSession]); // Removed chats.length to break the infinite loop
 
   const getMessageBody = (m: any): string => {
     const msgContent = m.message || m;
@@ -272,7 +274,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     if (currentSession) {
       fetchChats();
     }
-  }, [currentSession, fetchChats]);
+  }, [currentSession]); // Removed fetchChats from dependencies
 
   useEffect(() => {
     if (!currentSession) return;
