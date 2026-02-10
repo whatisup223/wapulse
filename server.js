@@ -639,7 +639,8 @@ cron.schedule('*/5 * * * * *', () => {
 
 // Helper: Transform Evolution Chat to Local Format
 const transformChat = (c, instanceName) => {
-    const rawId = c.id || c.remoteJid || '';
+    // Prioritize remoteJid (WhatsApp ID) over c.id (Internal Evolution ID)
+    const rawId = c.remoteJid || c.id || '';
     const fullJid = normalizeJid(rawId);
     if (!fullJid) return null;
 
@@ -650,10 +651,20 @@ const transformChat = (c, instanceName) => {
         updateJidLink(instanceName, jid, lid);
     }
 
+    // Deep Discovery: Check lastMessage metadata for linked IDs (Evolution exposes this in remoteJidAlt)
+    const altJid = normalizeJid(c.lastMessage?.key?.remoteJidAlt);
+    if (altJid && fullJid && altJid !== fullJid) {
+        if (fullJid.includes('@lid') && altJid.includes('@s.whatsapp.net')) {
+            updateJidLink(instanceName, altJid, fullJid);
+        } else if (fullJid.includes('@s.whatsapp.net') && altJid.includes('@lid')) {
+            updateJidLink(instanceName, fullJid, altJid);
+        }
+    }
+
     const [idPart, domain] = fullJid.split('@');
 
     // Name Resolution Logic
-    let finalName = c.name || c.pushName || c.pushname || c.verifiedName;
+    let finalName = c.name || c.pushName || c.pushname || c.verifiedName || c.lastMessage?.pushName;
 
     // Check contacts cache if name missing
     if (!finalName) {
@@ -669,8 +680,8 @@ const transformChat = (c, instanceName) => {
             else finalName = idPart;
         } else if (domain === 'newsletter') {
             finalName = `Channel: ${idPart.substring(0, 8)}...`;
-        } else if (c.pushName || c.pushname) {
-            finalName = c.pushName || c.pushname;
+        } else if (c.pushName || c.pushname || c.lastMessage?.pushName) {
+            finalName = c.pushName || c.pushname || c.lastMessage?.pushName;
         } else {
             finalName = idPart;
         }
