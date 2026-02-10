@@ -343,7 +343,7 @@ async function processQueue() {
 
     try {
         await db.read();
-        const campaigns = db.data.campaigns;
+        const campaigns = db.data.campaigns || [];
         const now = new Date();
 
         // 1. Promote due scheduled campaigns to in_progress
@@ -354,15 +354,15 @@ async function processQueue() {
         );
 
         if (dueCampaigns.length > 0) {
-            console.log(`Found ${dueCampaigns.length} due campaigns. Starting them...`);
+            console.log(`[Queue] Promoting ${dueCampaigns.length} campaigns to in_progress`);
             dueCampaigns.forEach(c => {
                 c.status = 'in_progress';
-                console.log(`Starting scheduled campaign: ${c.name}`);
             });
             await db.write();
         }
 
         // 2. Pick the first in_progress campaign to process
+        // We only process ONE recipient from ONE campaign at a time to respect delays
         const activeCampaign = campaigns.find(c => c.status === 'in_progress');
 
         if (!activeCampaign) {
@@ -370,9 +370,14 @@ async function processQueue() {
             return;
         }
 
+        // Find the next recipient that is actually 'pending'
         const nextRecipient = activeCampaign.recipientsList.find(r => r.status === 'pending');
 
         if (nextRecipient) {
+            // LOCK: Mark as processing immediately before any async calls
+            nextRecipient.status = 'processing';
+            await db.write(); // Small write to lock the recipient
+
             let sender = activeCampaign.senderInstance;
 
             // Rotation Logic
@@ -391,11 +396,13 @@ async function processQueue() {
                         const randomIndex = Math.floor(Math.random() * openInstances.length);
                         activeCampaign.currentSender = openInstances[randomIndex].instanceName || openInstances[randomIndex].name;
                         activeCampaign.sentSinceRotation = 0;
-                        console.log(`Rotating sender to: ${activeCampaign.currentSender}`);
+                        console.log(`[Queue] Rotating sender to: ${activeCampaign.currentSender}`);
                     }
                     sender = activeCampaign.currentSender;
                 } catch (e) {
-                    console.error("Rotation Error:", e.message);
+                    console.error("[Queue] Rotation Error:", e.message);
+                    nextRecipient.status = 'pending'; // Unlock
+                    await db.write();
                     isProcessing = false;
                     return;
                 }
@@ -403,14 +410,13 @@ async function processQueue() {
 
             // Sending
             try {
-                // Enhance: Encode sender name to handle Arabic/Spaces
                 const encodedSender = encodeURIComponent(sender);
-                console.log(`🚀 Sending to ${nextRecipient.number} via ${encodedSender}...`);
+                console.log(`[Queue] Sending "${activeCampaign.name}" to ${nextRecipient.number} via ${sender}...`);
 
                 const response = await axios.post(`${EVOLUTION_URL}/message/sendText/${encodedSender}`, {
                     number: nextRecipient.number,
                     text: activeCampaign.message,
-                    linkPreview: true // Enhancement: Good practice
+                    linkPreview: true
                 }, {
                     headers: { 'apikey': EVOLUTION_API_KEY }
                 });
@@ -421,43 +427,57 @@ async function processQueue() {
                     if (activeCampaign.senderInstance === 'all') {
                         activeCampaign.sentSinceRotation = (activeCampaign.sentSinceRotation || 0) + 1;
                     }
+                    console.log(`[Queue] ✅ Sent successfully to ${nextRecipient.number}`);
                 } else {
                     nextRecipient.status = 'failed';
                     activeCampaign.failedCount++;
+                    console.error(`[Queue] ❌ Failed to send to ${nextRecipient.number}: HTTP ${response.status}`);
                 }
             } catch (error) {
-                console.error(`Send failure to ${nextRecipient.number}:`, error.message);
+                console.error(`[Queue] ❌ Send failure to ${nextRecipient.number}:`, error.message);
                 nextRecipient.status = 'failed';
                 activeCampaign.failedCount++;
                 if (activeCampaign.senderInstance === 'all') activeCampaign.currentSender = null;
             }
 
-            activeCampaign.current = activeCampaign.recipientsList.filter(r => r.status !== 'pending').length;
+            // Update Progress
+            activeCampaign.current = activeCampaign.recipientsList.filter(r => r.status === 'sent' || r.status === 'failed').length;
 
-            // Final Status Check - Based on actual pending list, not just counter
-            const stillPending = activeCampaign.recipientsList.some(r => r.status === 'pending');
+            // Check if Finished
+            const stillPending = activeCampaign.recipientsList.some(r => r.status === 'pending' || r.status === 'processing');
             if (!stillPending) {
-                console.log(`Campaign ${activeCampaign.name} finished.`);
+                console.log(`[Queue] 🎉 Campaign "${activeCampaign.name}" finished.`);
                 activeCampaign.status = activeCampaign.failedCount === 0 ? 'sent' : 'partial';
             }
 
             await db.write();
 
-            // Intelligent delay before next message in THIS process
-            const waitTime = Math.floor(Math.random() * (activeCampaign.maxDelay - activeCampaign.minDelay + 1) + activeCampaign.minDelay) * 1000;
+            // Intelligent delay before next message
+            const min = activeCampaign.minDelay || 2;
+            const max = activeCampaign.maxDelay || 5;
+            const waitTime = Math.floor(Math.random() * (max - min + 1) + min) * 1000;
+
             setTimeout(() => {
                 isProcessing = false;
                 processQueue();
             }, waitTime);
 
         } else {
-            // No recipients left but status was in_progress
-            activeCampaign.status = activeCampaign.failedCount === 0 ? 'sent' : 'partial';
+            // No recipients pending but status was in_progress? Close it.
+            console.log(`[Queue] Campaign "${activeCampaign.name}" has no pending recipients left. Closing.`);
+            const hasSent = activeCampaign.recipientsList.some(r => r.status === 'sent');
+            const hasFailed = activeCampaign.recipientsList.some(r => r.status === 'failed');
+
+            if (!hasSent && !hasFailed) activeCampaign.status = 'failed';
+            else activeCampaign.status = activeCampaign.failedCount === 0 ? 'sent' : 'partial';
+
             await db.write();
             isProcessing = false;
+            // Immediate check for next campaign
+            processQueue();
         }
     } catch (err) {
-        console.error("Queue Processor Fatal Error:", err);
+        console.error("[Queue] Fatal Error:", err);
         isProcessing = false;
     }
 }
