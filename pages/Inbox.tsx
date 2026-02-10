@@ -169,7 +169,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
 
   const COMMON_EMOJIS = ['😊', '😂', '😘', '🥰', '😍', '😇', '😎', '🤩', '🥳', '🤔', '🤨', '😐', '😑', '😶', '🙄', '😏', '😣', '😥', '😮', '🤐', '😯', '😪', '😫', '🥱', '😴', '😌', '😛', '😜', '😜', '😝', '🤤', '😒', '😓', '😔', '😕', '🙃', '🤑', '😲', '☹️', '🙁', '😖', '😞', '😟', '😤', '😢', '😭', '😦', '😧', '😨', '😩', '🤯', '😬', '😰', '😱', '🥵', '🥶', '😳', '🤪', '😵', '🥴', '😠', '😡', '🤬', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '😇', '🥳', '🥺', '🤠', '🤡', '🤥', '🤫', '🤭', '🧐', '🤓', '😈', '👿', '👹', '👺', '💀', '👻', '👽', '🤖', '💩', '😺', '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾', '👋', '🤚', '🖐', '✋', '🖖', '👌', '🤌', '🤏', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '🙏', '✍️', '💅', '🤳', '💪', '🦾', '🦵', '🦿', '🦶', '👣', '👂', '🦻', '👃', '🧠', '🫀', '🫁', '🦷', '🦴', '👀', '👁', '👅', '👄', '💋', '🩸'];
 
-  // FETCH CHATS FOR CURRENT SESSION
+  // FETCH CHATS FOR CURRENT SESSION (FROM LOCAL API)
   const fetchChats = useCallback(async (isManualSync = false) => {
     if (!currentSession) return;
     const sessionName = currentSession.instanceName;
@@ -178,92 +178,13 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     else if (!isManualSync && chats.length === 0) setLoadingChats(true);
 
     try {
-      const response = await fetch(`${EVOLUTION_URL}/chat/findChats/${sessionName}`, {
-        method: 'POST',
-        headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
+      // Use local API: Handles caching and sync automatically
+      const response = await fetch(`/api/chats/${sessionName}`);
       if (!response.ok) throw new Error('Failed to fetch chats');
-      const data = await response.json();
-      const rawChats = Array.isArray(data) ? data : (data.records || data.data || []);
 
-      const processed = rawChats.map((c: any) => {
-        const fullJid = (c.remoteJid || c.id || '').toLowerCase().trim();
-        const [idPart, domain] = fullJid.split('@');
-        const cleanIdPart = idPart?.split(':')[0] || '';
+      const consolidatedChats: EvolutionChat[] = await response.json();
 
-        let phone = (domain === 's.whatsapp.net') ? cleanIdPart.replace(/\D/g, '') : '';
-        const pushName = c.pushName || c.name || '';
-        const profilePic = c.profilePicUrl || null;
-
-        if (!phone && pushName) {
-          const digits = pushName.replace(/\D/g, '');
-          if (digits.length >= 10 && digits.length <= 15) phone = digits;
-        }
-
-        return { ...c, fullJid, cleanIdPart, domain, phone, pushName, profilePic, timestamp: Math.max(c.lastMessage?.messageTimestamp || 0, c.updatedAt ? Math.floor(new Date(c.updatedAt).getTime() / 1000) : 0, c.timestamp || 0) };
-      }).filter((c: any) => c.fullJid && !c.fullJid.includes('@status') && !c.fullJid.includes('@broadcast'));
-
-      const newJidToId = new Map<string, string>();
-      const masterMap = new Map<string, any>();
-
-      processed.forEach(c => {
-        if (c.phone) {
-          const masterKey = `phone:${c.phone}`;
-          newJidToId.set(c.fullJid, masterKey);
-          if (!masterMap.has(masterKey) || c.timestamp > masterMap.get(masterKey).timestamp) {
-            masterMap.set(masterKey, c);
-          }
-        }
-      });
-
-      processed.forEach(c => {
-        if (!newJidToId.has(c.fullJid) && c.profilePic) {
-          const masterKey = `pic:${c.profilePic}`;
-          newJidToId.set(c.fullJid, masterKey);
-          if (!masterMap.has(masterKey) || c.timestamp > masterMap.get(masterKey).timestamp) {
-            masterMap.set(masterKey, c);
-          }
-        }
-      });
-
-      processed.forEach(c => {
-        if (!newJidToId.has(c.fullJid)) {
-          const masterKey = `jid:${c.cleanIdPart}`;
-          newJidToId.set(c.fullJid, masterKey);
-          masterMap.set(masterKey, c);
-        }
-      });
-
-      const consolidatedChats: EvolutionChat[] = [];
-      const identityToAllJids = new Map<string, Set<string>>();
-
-      masterMap.forEach((master, key) => {
-        const linkedRaw = processed.filter(p => newJidToId.get(p.fullJid) === key);
-        const jids = new Set<string>(linkedRaw.map(p => p.fullJid));
-        identityToAllJids.set(key, jids);
-
-        const totalUnread = linkedRaw.reduce((sum, p) => sum + (p.unreadCount || 0), 0);
-        const latestInfo = linkedRaw.sort((a, b) => b.timestamp - a.timestamp)[0];
-
-        let finalName = latestInfo.pushName || latestInfo.cleanIdPart;
-        if (latestInfo.phone && (!finalName || finalName === latestInfo.cleanIdPart)) {
-          finalName = `+${latestInfo.phone}`;
-        }
-
-        consolidatedChats.push({
-          id: latestInfo.fullJid,
-          name: finalName,
-          unreadCount: totalUnread,
-          timestamp: latestInfo.timestamp,
-          profilePicUrl: latestInfo.profilePic,
-          lastMessage: latestInfo.lastMessage
-        });
-      });
-
-      jidToIdentity.current = newJidToId;
-      identityToJids.current = identityToAllJids;
-      setChats(consolidatedChats.sort((a, b) => b.timestamp - a.timestamp));
+      setChats(consolidatedChats);
     } catch (err) {
       console.error('Error fetching chats:', err);
     } finally {
@@ -284,12 +205,10 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     return '';
   };
 
+  // FETCH MESSAGES FOR SELECTED CHAT (FROM LOCAL API)
   const fetchMessages = useCallback(async (primaryChatId: string, isPolling = false) => {
     if (!currentSession) return;
     const sessionName = currentSession.instanceName;
-
-    const identityKey = jidToIdentity.current.get(primaryChatId.toLowerCase().trim());
-    const allJids = Array.from(identityToJids.current.get(identityKey || '') || [primaryChatId]);
 
     if (!isPolling) {
       setLoadingMessages(true);
@@ -298,40 +217,11 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     currentChatIdRef.current = primaryChatId;
 
     try {
-      const results = await Promise.all(allJids.map(jid =>
-        fetch(`${EVOLUTION_URL}/chat/findMessages/${sessionName}`, {
-          method: 'POST',
-          headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ where: { remoteJid: jid }, limit: 50 })
-        }).then(r => r.json()).catch(() => [])
-      ));
+      // Use local API: Handles caching and history backfill automatically
+      const response = await fetch(`/api/messages/${sessionName}/${encodeURIComponent(primaryChatId)}`);
+      if (!response.ok) throw new Error('Failed to fetch messages');
 
-      const unifiedMsgMap = new Map<string, EvolutionMessage>();
-
-      results.forEach(data => {
-        let rawMessages: any[] = [];
-        if (Array.isArray(data)) rawMessages = data;
-        else if (data && typeof data === 'object') {
-          const msgObj = data.messages || data.data || data.records || data;
-          if (Array.isArray(msgObj)) rawMessages = msgObj;
-          else if (msgObj && Array.isArray(msgObj.records)) rawMessages = msgObj.records;
-        }
-
-        rawMessages.forEach(m => {
-          const mId = m.key?.id || m.id;
-          if (!mId) return;
-          unifiedMsgMap.set(mId, {
-            id: mId,
-            body: getMessageBody(m),
-            fromMe: m.key?.fromMe || m.fromMe || false,
-            timestamp: m.messageTimestamp || m.timestamp || 0,
-            chatId: m.key?.remoteJid || m.remoteJid
-          });
-        });
-      });
-
-      const sortedMessages = Array.from(unifiedMsgMap.values())
-        .sort((a, b) => a.timestamp - b.timestamp);
+      const sortedMessages: EvolutionMessage[] = await response.json();
 
       if (currentChatIdRef.current === primaryChatId) {
         // Check for new messages and send notification
@@ -343,16 +233,10 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
             // Get the new messages
             const newMessages = sortedMessages.slice(previousMessageCount);
 
-            // Send notification for each new message from customer (not from me)
+            // Send notification for each new message from customer
             newMessages.forEach(msg => {
               if (!msg.fromMe) {
-                // Find the chat to get sender name
-                const chat = chats.find(c => {
-                  const identityKey = jidToIdentity.current.get(c.id.toLowerCase().trim());
-                  const allJids = Array.from(identityToJids.current.get(identityKey || '') || [c.id]);
-                  return allJids.some(jid => jid === msg.chatId);
-                });
-
+                const chat = chats.find(c => c.id === primaryChatId);
                 if (chat) {
                   sendNewMessageNotification(
                     chat.name,
@@ -372,7 +256,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     } finally {
       if (!isPolling && currentChatIdRef.current === primaryChatId) setLoadingMessages(false);
     }
-  }, [currentSession]);
+  }, [currentSession, messages.length, chats, notificationsEnabled, language]);
 
   useEffect(() => {
     setChats([]);

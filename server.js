@@ -173,7 +173,7 @@ app.post('/api/settings/profile', async (req, res) => {
 // Evolution API Webhook Receiver
 // ---------------------------------------------------------
 
-app.post('/api/webhooks/evolution', (req, res) => {
+app.post('/api/webhooks/evolution', async (req, res) => {
     try {
         const { event, instance, data } = req.body;
 
@@ -185,34 +185,140 @@ app.post('/api/webhooks/evolution', (req, res) => {
         console.log('='.repeat(60));
 
         // Handle different events
+        const instanceName = instance; // Evolution inconsistent naming sometimes
+
+        // Ensure collections exist
+        db.data = db.data || {};
+        if (!db.data.chats) db.data.chats = [];
+        if (!db.data.messages) db.data.messages = [];
+        if (!db.data.contacts) db.data.contacts = [];
+
+        // Helper: Find index
+        const findChatIndex = (remoteJid) => db.data.chats.findIndex(c => c.id === remoteJid && c.instanceName === instanceName);
+
         switch (event) {
             case 'messages.upsert':
-                console.log('✉️ New message received');
-                // TODO: Send to WebSocket clients or update database
+                console.log('✉️ Processing Incoming Message...');
+                const msgData = data.data || data;
+                const message = msgData.message || msgData;
+
+                if (!message) break;
+
+                const msgId = message.key?.id || message.id;
+                const remoteJid = message.key?.remoteJid || message.remoteJid;
+                const msgBody = message.message?.conversation || message.message?.extendedTextMessage?.text || message.body || '';
+                const timestamp = message.messageTimestamp || message.timestamp || Math.floor(Date.now() / 1000);
+                const fromMe = message.key?.fromMe || message.fromMe || false;
+
+                // 1. Deduplicate Message
+                const existingMsg = db.data.messages.find(m => m.id === msgId);
+                if (!existingMsg) {
+                    db.data.messages.push({
+                        id: msgId,
+                        instanceName,
+                        chatId: remoteJid,
+                        body: msgBody,
+                        fromMe,
+                        timestamp,
+                        rawData: message, // Store raw for robustness
+                        status: 'received'
+                    });
+                    console.log(`✅ Message stored: ${msgId}`);
+                } else {
+                    console.log(`⚠️ Duplicate message ignored: ${msgId}`);
+                }
+
+                // 2. Update Chat (Last Message & Unread)
+                const chatIdx = findChatIndex(remoteJid);
+                if (chatIdx > -1) {
+                    const chat = db.data.chats[chatIdx];
+                    chat.lastMessage = msgBody;
+                    chat.timestamp = timestamp;
+                    if (!fromMe) chat.unreadCount = (chat.unreadCount || 0) + 1;
+
+                    // Move to top (remove and unshift)
+                    db.data.chats.splice(chatIdx, 1);
+                    db.data.chats.unshift(chat);
+                } else {
+                    // New Chat (Upsert will handle full details later, but create placeholder now)
+                    db.data.chats.unshift({
+                        id: remoteJid,
+                        instanceName,
+                        name: message.pushName || remoteJid.split('@')[0],
+                        unreadCount: fromMe ? 0 : 1,
+                        timestamp,
+                        lastMessage: msgBody,
+                        profilePicUrl: null // Wait for contact update
+                    });
+                }
+                await db.write();
                 break;
 
             case 'messages.update':
-                console.log('📝 Message updated');
+                console.log('📝 Message status updated');
+                // Update message status (read/delivered) logic here if needed
                 break;
 
             case 'chats.upsert':
-                console.log('💬 New chat created');
-                break;
-
             case 'chats.update':
-                console.log('💬 Chat updated');
+                console.log('💬 Updating Chat Data...');
+                const chatData = Array.isArray(data) ? data : [data];
+
+                for (const c of chatData) {
+                    const cId = c.id || c.remoteJid;
+                    const cx = findChatIndex(cId);
+
+                    const newChatObj = {
+                        id: cId,
+                        instanceName,
+                        name: c.name || c.pushName || cId.split('@')[0],
+                        unreadCount: c.unreadCount || 0,
+                        timestamp: c.conversationTimestamp || Math.floor(Date.now() / 1000),
+                        profilePicUrl: c.profilePictureUrl || null,
+                        lastMessage: c.lastMessage?.message?.conversation || ''
+                    };
+
+                    if (cx > -1) {
+                        // Merge updates
+                        db.data.chats[cx] = { ...db.data.chats[cx], ...newChatObj };
+                    } else {
+                        db.data.chats.push(newChatObj);
+                    }
+                }
+                await db.write();
                 break;
 
             case 'contacts.upsert':
-                console.log('👤 New contact added');
+            case 'contacts.update':
+                console.log('👤 Updating Contacts...');
+                const contactData = Array.isArray(data) ? data : [data];
+
+                for (const c of contactData) {
+                    const cId = c.id || c.remoteJid;
+                    const existingC = db.data.contacts.find(x => x.id === cId && x.instanceName === instanceName);
+
+                    if (existingC) {
+                        existingC.name = c.name || c.pushName || existingC.name;
+                        existingC.profilePicUrl = c.profilePictureUrl || existingC.profilePicUrl;
+                    } else {
+                        db.data.contacts.push({
+                            id: cId,
+                            instanceName,
+                            name: c.name || c.pushName || cId.split('@')[0],
+                            profilePicUrl: c.profilePictureUrl || null
+                        });
+                    }
+                }
+                await db.write();
                 break;
 
             case 'connection.update':
-                console.log('🔌 Connection status changed');
+                console.log('🔌 Connection status changed:', data.state);
+                // Can update instance status here
                 break;
 
             default:
-                console.log('ℹ️ Other event:', event);
+                console.log('ℹ️ Unhandled event:', event);
         }
 
         // Always respond with 200 to acknowledge receipt
@@ -361,7 +467,146 @@ cron.schedule('*/5 * * * * *', () => {
 // ---------------------------------------------------------
 
 // ---------------------------------------------------------
-// API Endpoints
+// Inbox API Endpoints (Local Cached)
+// ---------------------------------------------------------
+
+// Helper: Transform Evolution Chat to Local Format
+const transformChat = (c, instanceName) => {
+    const fullJid = (c.id || c.remoteJid || '').toLowerCase().trim();
+    const cleanIdPart = fullJid.split('@')[0].split(':')[0];
+    let phone = (fullJid.includes('s.whatsapp.net')) ? cleanIdPart.replace(/\D/g, '') : '';
+
+    // Fallback phone from pushName if numeric
+    if (!phone && c.pushName) {
+        const digits = c.pushName.replace(/\D/g, '');
+        if (digits.length >= 10 && digits.length <= 15) phone = digits;
+    }
+
+    let finalName = c.name || c.pushName || c.pushname || cleanIdPart;
+    if (phone && (!finalName || finalName === cleanIdPart)) {
+        finalName = `+${phone}`;
+    }
+
+    return {
+        id: fullJid,
+        instanceName,
+        name: finalName,
+        unreadCount: c.unreadCount || 0,
+        timestamp: Math.max(c.conversationTimestamp || 0, c.timestamp || 0, c.lastMessage?.messageTimestamp || 0),
+        profilePicUrl: c.profilePictureUrl || null,
+        lastMessage: typeof c.lastMessage === 'string' ? c.lastMessage : (c.lastMessage?.message?.conversation || c.lastMessage?.body || '')
+    };
+};
+
+/* GET /api/chats/:instanceName
+   - Returns cached chats
+   - If cache empty, fetches from Evolution (Sync)
+*/
+app.get('/api/chats/:instanceName', async (req, res) => {
+    const { instanceName } = req.params;
+    await db.read();
+
+    // Ensure collections
+    db.data = db.data || {};
+    if (!db.data.chats) db.data.chats = [];
+
+    // 1. Try Cache
+    let cachedChats = db.data.chats.filter(c => c.instanceName === instanceName);
+
+    // 2. If Cache Empty, Sync (Manual Fetch)
+    if (cachedChats.length === 0) {
+        console.log(`Cache miss for ${instanceName}. Fetching from Evolution...`);
+        try {
+            const response = await axios.post(`${EVOLUTION_URL}/chat/findChats/${instanceName}`, {}, {
+                headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' }
+            });
+
+            const rawChats = response.data || [];
+            const processed = rawChats.map(c => transformChat(c, instanceName));
+
+            // Upsert into DB
+            for (const pc of processed) {
+                // Remove duplicates if any exist (shouldn't if cache was empty, but safe)
+                // Filter out Status/Broadcast
+                if (pc.id.includes('@status') || pc.id.includes('@broadcast')) continue;
+
+                db.data.chats.push(pc);
+            }
+            await db.write();
+            cachedChats = processed.filter(c => !c.id.includes('@status') && !c.id.includes('@broadcast'));
+
+        } catch (e) {
+            console.error('Initial Sync Error:', e.message);
+            // Return empty if offline or error
+        }
+    }
+
+    // Sort by timestamp desc
+    cachedChats.sort((a, b) => b.timestamp - a.timestamp);
+    res.json(cachedChats);
+});
+
+/* GET /api/messages/:instanceName/:chatId
+   - Returns cached messages
+   - Optionally fetches history if requested or cache miss (Hybrid)
+*/
+app.get('/api/messages/:instanceName/:chatId', async (req, res) => {
+    const { instanceName, chatId } = req.params;
+    await db.read();
+
+    if (!db.data.messages) db.data.messages = [];
+
+    // Normalize Chat ID (remove potential URL encoding issues)
+    const targetId = decodeURIComponent(chatId);
+
+    // 1. Get from Cache
+    let cachedMsgs = db.data.messages.filter(m => m.instanceName === instanceName && m.chatId === targetId);
+
+    // 2. If very few messages, try to fetch history (Auto-backfill)
+    if (cachedMsgs.length < 10) {
+        console.log(`Low cache for ${targetId}. Backfilling...`);
+        try {
+            const response = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${instanceName}`, {
+                where: { remoteJid: targetId },
+                limit: 50 // Fetch last 50
+            }, {
+                headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' }
+            });
+
+            const rawMsgs = response.data?.messages || response.data?.records || response.data || [];
+            if (Array.isArray(rawMsgs)) {
+                let newCount = 0;
+                for (const m of rawMsgs) {
+                    const mId = m.key?.id || m.id;
+                    if (!db.data.messages.find(ex => ex.id === mId)) {
+                        db.data.messages.push({
+                            id: mId,
+                            instanceName,
+                            chatId: targetId,
+                            body: m.message?.conversation || m.message?.extendedTextMessage?.text || m.body || '',
+                            fromMe: m.key?.fromMe || m.fromMe || false,
+                            timestamp: m.messageTimestamp || m.timestamp || 0,
+                            status: 'history_sync'
+                        });
+                        newCount++;
+                    }
+                }
+                if (newCount > 0) await db.write();
+            }
+        } catch (e) {
+            console.error('History Sync Error:', e.message);
+        }
+    }
+
+    // Re-read cache
+    cachedMsgs = db.data.messages.filter(m => m.instanceName === instanceName && m.chatId === targetId);
+    cachedMsgs.sort((a, b) => a.timestamp - b.timestamp);
+
+    res.json(cachedMsgs);
+});
+
+// ---------------------------------------------------------
+// Original API Endpoints Structure continued...
 // ---------------------------------------------------------
 
 // Link Instance to User
