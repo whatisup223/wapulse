@@ -412,7 +412,22 @@ app.delete('/api/campaigns/:id', async (req, res) => {
 
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {
+    // Serve static files with explicit configuration
     app.use(express.static(path.join(__dirname, 'dist')));
+
+    // Explicitly handle assets requests to debug and ensure MIME types
+    app.use('/assets', (req, res, next) => {
+        const filePath = path.join(__dirname, 'dist', 'assets', req.path);
+        console.log(`📂 Asset request: ${req.path}`);
+        if (req.path.endsWith('.css')) {
+            res.setHeader('Content-Type', 'text/css');
+        } else if (req.path.endsWith('.js')) {
+            res.setHeader('Content-Type', 'application/javascript');
+        }
+        next();
+    }, express.static(path.join(__dirname, 'dist', 'assets')));
+
+    // Redirect all other requests to index.html
     app.get('*', (req, res) => {
         res.sendFile(path.join(__dirname, 'dist', 'index.html'));
     });
