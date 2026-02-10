@@ -403,9 +403,14 @@ async function processQueue() {
 
             // Sending
             try {
-                const response = await axios.post(`${EVOLUTION_URL}/message/sendText/${sender}`, {
+                // Enhance: Encode sender name to handle Arabic/Spaces
+                const encodedSender = encodeURIComponent(sender);
+                console.log(`🚀 Sending to ${nextRecipient.number} via ${encodedSender}...`);
+
+                const response = await axios.post(`${EVOLUTION_URL}/message/sendText/${encodedSender}`, {
                     number: nextRecipient.number,
-                    text: activeCampaign.message
+                    text: activeCampaign.message,
+                    linkPreview: true // Enhancement: Good practice
                 }, {
                     headers: { 'apikey': EVOLUTION_API_KEY }
                 });
@@ -501,43 +506,75 @@ const transformChat = (c, instanceName) => {
 /* GET /api/chats/:instanceName
    - Returns cached chats
    - If cache empty, fetches from Evolution (Sync)
+   - Query param ?force=true forces a re-sync from Evolution
 */
 app.get('/api/chats/:instanceName', async (req, res) => {
     const { instanceName } = req.params;
+    const forceSync = req.query.force === 'true';
+
     await db.read();
 
     // Ensure collections
     db.data = db.data || {};
     if (!db.data.chats) db.data.chats = [];
 
-    // 1. Try Cache
+    // 1. Try Cache (if not forcing)
     let cachedChats = db.data.chats.filter(c => c.instanceName === instanceName);
 
-    // 2. If Cache Empty, Sync (Manual Fetch)
-    if (cachedChats.length === 0) {
-        console.log(`Cache miss for ${instanceName}. Fetching from Evolution...`);
+    // 2. If Cache Empty OR Force Sync, Sync from Evolution
+    if (cachedChats.length === 0 || forceSync) {
+        console.log(`Layer 2 Sync: Fetching chats for ${instanceName} (Force: ${forceSync})`);
+
         try {
-            const response = await axios.post(`${EVOLUTION_URL}/chat/findChats/${instanceName}`, {}, {
+            // Encode instance name to handle Arabic characters and spaces safely
+            const encodedInstanceName = encodeURIComponent(instanceName);
+            const response = await axios.post(`${EVOLUTION_URL}/chat/findChats/${encodedInstanceName}`, {}, {
                 headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' }
             });
 
-            const rawChats = response.data || [];
+            // Robust Data Extraction
+            let rawChats = [];
+            if (Array.isArray(response.data)) {
+                rawChats = response.data;
+            } else if (response.data && Array.isArray(response.data.records)) {
+                rawChats = response.data.records;
+            } else if (response.data && Array.isArray(response.data.data)) {
+                rawChats = response.data.data;
+            }
+
+            console.log(`Evolution returned ${rawChats.length} chats.`);
+
             const processed = rawChats.map(c => transformChat(c, instanceName));
 
             // Upsert into DB
+            let upsertCount = 0;
             for (const pc of processed) {
-                // Remove duplicates if any exist (shouldn't if cache was empty, but safe)
                 // Filter out Status/Broadcast
-                if (pc.id.includes('@status') || pc.id.includes('@broadcast')) continue;
+                if (pc.id.includes('@status') || pc.id.includes('@broadcast') || !pc.id) continue;
 
-                db.data.chats.push(pc);
+                const existingIdx = db.data.chats.findIndex(c => c.id === pc.id && c.instanceName === instanceName);
+                if (existingIdx > -1) {
+                    // Update existing
+                    db.data.chats[existingIdx] = { ...db.data.chats[existingIdx], ...pc };
+                } else {
+                    // Insert new
+                    db.data.chats.push(pc);
+                }
+                upsertCount++;
             }
-            await db.write();
-            cachedChats = processed.filter(c => !c.id.includes('@status') && !c.id.includes('@broadcast'));
+
+            if (upsertCount > 0) {
+                await db.write();
+            }
+
+            // Refresh local variable after update
+            cachedChats = db.data.chats.filter(c => c.instanceName === instanceName);
 
         } catch (e) {
-            console.error('Initial Sync Error:', e.message);
-            // Return empty if offline or error
+            console.error('Sync Error:', e.message);
+            if (e.response) {
+                console.error('Evolution Error Data:', JSON.stringify(e.response.data));
+            }
         }
     }
 
@@ -566,7 +603,9 @@ app.get('/api/messages/:instanceName/:chatId', async (req, res) => {
     if (cachedMsgs.length < 10) {
         console.log(`Low cache for ${targetId}. Backfilling...`);
         try {
-            const response = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${instanceName}`, {
+            // Encode instance name
+            const encodedInstanceName = encodeURIComponent(instanceName);
+            const response = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${encodedInstanceName}`, {
                 where: { remoteJid: targetId },
                 limit: 50 // Fetch last 50
             }, {

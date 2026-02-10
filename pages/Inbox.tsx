@@ -179,7 +179,10 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
 
     try {
       // Use local API: Handles caching and sync automatically
-      const response = await fetch(`/api/chats/${sessionName}`);
+      const encodedSessionName = encodeURIComponent(sessionName);
+      const url = `/api/chats/${encodedSessionName}${isManualSync ? '?force=true' : ''}`;
+
+      const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch chats');
 
       const consolidatedChats: EvolutionChat[] = await response.json();
@@ -191,7 +194,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
       setLoadingChats(false);
       setSyncing(false);
     }
-  }, [currentSession]);
+  }, [currentSession, chats.length]); // Added chats.length to dependencies for the `chats.length === 0` check
 
   const getMessageBody = (m: any): string => {
     const msgContent = m.message || m;
@@ -218,7 +221,11 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
 
     try {
       // Use local API: Handles caching and history backfill automatically
-      const response = await fetch(`/api/messages/${sessionName}/${encodeURIComponent(primaryChatId)}`);
+      // Encode both session name and chat ID
+      const encodedSessionName = encodeURIComponent(sessionName);
+      const encodedChatId = encodeURIComponent(primaryChatId);
+
+      const response = await fetch(`/api/messages/${encodedSessionName}/${encodedChatId}`);
       if (!response.ok) throw new Error('Failed to fetch messages');
 
       const sortedMessages: EvolutionMessage[] = await response.json();
