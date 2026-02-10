@@ -45,6 +45,17 @@ await db.write();
 const EVOLUTION_URL = process.env.VITE_EVOLUTION_URL;
 const EVOLUTION_API_KEY = process.env.VITE_EVOLUTION_API_KEY;
 
+// Helper: Normalize JID (Remove device suffix and standardize)
+const normalizeJid = (jid) => {
+    if (!jid || typeof jid !== 'string') return '';
+    const clean = jid.toLowerCase().trim();
+    if (clean.includes('@broadcast') || clean.includes('@status')) return '';
+
+    const [idPart, domain] = clean.split('@');
+    const cleanId = idPart.split(':')[0]; // remove :1, :2 etc
+    return domain ? `${cleanId}@${domain}` : cleanId;
+};
+
 // Helper: Get User ID from Headers
 const getUserId = (req) => {
     return req.headers['x-user-id'] || req.header('X-User-Id');
@@ -204,8 +215,15 @@ app.post('/api/webhooks/evolution', async (req, res) => {
 
                 if (!message) break;
 
+                const rawRemoteJid = message.key?.remoteJid || message.remoteJid;
+                const remoteJid = normalizeJid(rawRemoteJid);
+
+                if (!remoteJid) {
+                    console.log('🚫 Skipping message for status/broadcast');
+                    break;
+                }
+
                 const msgId = message.key?.id || message.id;
-                const remoteJid = message.key?.remoteJid || message.remoteJid;
                 const msgBody = message.message?.conversation || message.message?.extendedTextMessage?.text || message.body || '';
                 const timestamp = message.messageTimestamp || message.timestamp || Math.floor(Date.now() / 1000);
                 const fromMe = message.key?.fromMe || message.fromMe || false;
@@ -220,27 +238,25 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                         body: msgBody,
                         fromMe,
                         timestamp,
-                        rawData: message, // Store raw for robustness
+                        rawData: message,
                         status: 'received'
                     });
-                    console.log(`✅ Message stored: ${msgId}`);
-                } else {
-                    console.log(`⚠️ Duplicate message ignored: ${msgId}`);
+                    console.log(`✅ Message stored: ${msgId} for ${remoteJid}`);
                 }
 
                 // 2. Update Chat (Last Message & Unread)
-                const chatIdx = findChatIndex(remoteJid);
+                const chatIdx = db.data.chats.findIndex(c => c.id === remoteJid && c.instanceName === instanceName);
                 if (chatIdx > -1) {
                     const chat = db.data.chats[chatIdx];
                     chat.lastMessage = msgBody;
                     chat.timestamp = timestamp;
                     if (!fromMe) chat.unreadCount = (chat.unreadCount || 0) + 1;
 
-                    // Move to top (remove and unshift)
+                    // Move to top
                     db.data.chats.splice(chatIdx, 1);
                     db.data.chats.unshift(chat);
                 } else {
-                    // New Chat (Upsert will handle full details later, but create placeholder now)
+                    // New Chat Placeholder
                     db.data.chats.unshift({
                         id: remoteJid,
                         instanceName,
@@ -248,7 +264,7 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                         unreadCount: fromMe ? 0 : 1,
                         timestamp,
                         lastMessage: msgBody,
-                        profilePicUrl: null // Wait for contact update
+                        profilePicUrl: null
                     });
                 }
                 await db.write();
@@ -265,24 +281,14 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                 const chatData = Array.isArray(data) ? data : [data];
 
                 for (const c of chatData) {
-                    const cId = c.id || c.remoteJid;
-                    const cx = findChatIndex(cId);
+                    const pc = transformChat(c, instanceName);
+                    if (!pc) continue;
 
-                    const newChatObj = {
-                        id: cId,
-                        instanceName,
-                        name: c.name || c.pushName || cId.split('@')[0],
-                        unreadCount: c.unreadCount || 0,
-                        timestamp: c.conversationTimestamp || Math.floor(Date.now() / 1000),
-                        profilePicUrl: c.profilePictureUrl || null,
-                        lastMessage: c.lastMessage?.message?.conversation || ''
-                    };
-
+                    const cx = db.data.chats.findIndex(x => x.id === pc.id && x.instanceName === instanceName);
                     if (cx > -1) {
-                        // Merge updates
-                        db.data.chats[cx] = { ...db.data.chats[cx], ...newChatObj };
+                        db.data.chats[cx] = { ...db.data.chats[cx], ...pc };
                     } else {
-                        db.data.chats.push(newChatObj);
+                        db.data.chats.push(pc);
                     }
                 }
                 await db.write();
@@ -497,19 +503,19 @@ cron.schedule('*/5 * * * * *', () => {
 
 // Helper: Transform Evolution Chat to Local Format
 const transformChat = (c, instanceName) => {
-    const fullJid = (c.id || c.remoteJid || '').toLowerCase().trim();
-    const cleanIdPart = fullJid.split('@')[0].split(':')[0];
-    let phone = (fullJid.includes('s.whatsapp.net')) ? cleanIdPart.replace(/\D/g, '') : '';
+    const rawId = c.id || c.remoteJid || '';
+    const fullJid = normalizeJid(rawId);
+    if (!fullJid) return null;
 
-    // Fallback phone from pushName if numeric
-    if (!phone && c.pushName) {
-        const digits = c.pushName.replace(/\D/g, '');
-        if (digits.length >= 10 && digits.length <= 15) phone = digits;
-    }
+    const [idPart] = fullJid.split('@');
 
-    let finalName = c.name || c.pushName || c.pushname || cleanIdPart;
-    if (phone && (!finalName || finalName === cleanIdPart)) {
-        finalName = `+${phone}`;
+    // Improved Name Logic: detect if it's a numeric ID and format as phone
+    const digits = idPart.replace(/\D/g, '');
+    let finalName = c.name || c.pushName || c.pushname || idPart;
+
+    // If name is just numbers, or LID prefix, try to clean it
+    if (/^\d+$/.test(finalName) || finalName.startsWith('lid_')) {
+        if (digits.length >= 7) finalName = `+${digits}`;
     }
 
     return {
@@ -518,7 +524,7 @@ const transformChat = (c, instanceName) => {
         name: finalName,
         unreadCount: c.unreadCount || 0,
         timestamp: Math.max(c.conversationTimestamp || 0, c.timestamp || 0, c.lastMessage?.messageTimestamp || 0),
-        profilePicUrl: c.profilePictureUrl || null,
+        profilePicUrl: c.profilePictureUrl || c.profilePicUrl || null,
         lastMessage: typeof c.lastMessage === 'string' ? c.lastMessage : (c.lastMessage?.message?.conversation || c.lastMessage?.body || '')
     };
 };
@@ -564,28 +570,21 @@ app.get('/api/chats/:instanceName', async (req, res) => {
 
             console.log(`Evolution returned ${rawChats.length} chats.`);
 
-            const processed = rawChats.map(c => transformChat(c, instanceName));
+            const processed = rawChats.map(c => transformChat(c, instanceName)).filter(c => c !== null);
 
             // Upsert into DB
             let upsertCount = 0;
             for (const pc of processed) {
-                // Filter out Status/Broadcast
-                if (pc.id.includes('@status') || pc.id.includes('@broadcast') || !pc.id) continue;
-
                 const existingIdx = db.data.chats.findIndex(c => c.id === pc.id && c.instanceName === instanceName);
                 if (existingIdx > -1) {
-                    // Update existing
                     db.data.chats[existingIdx] = { ...db.data.chats[existingIdx], ...pc };
                 } else {
-                    // Insert new
                     db.data.chats.push(pc);
                 }
                 upsertCount++;
             }
 
-            if (upsertCount > 0) {
-                await db.write();
-            }
+            if (upsertCount > 0) await db.write();
 
             // Refresh local variable after update
             cachedChats = db.data.chats.filter(c => c.instanceName === instanceName);
@@ -614,7 +613,9 @@ app.get('/api/messages/:instanceName/:chatId', async (req, res) => {
     if (!db.data.messages) db.data.messages = [];
 
     // Normalize Chat ID (remove potential URL encoding issues)
-    const targetId = decodeURIComponent(chatId);
+    const targetId = normalizeJid(decodeURIComponent(chatId));
+
+    if (!targetId) return res.json([]);
 
     // 1. Get from Cache
     let cachedMsgs = db.data.messages.filter(m => m.instanceName === instanceName && m.chatId === targetId);
