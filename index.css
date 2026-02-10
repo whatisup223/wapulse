@@ -1,15 +1,18 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
-    --color-wp-primary: #128C7E;
-    --color-wp-secondary: #075E54;
-    --color-wp-accent: #25D366;
-    --font-sans: "Plus Jakarta Sans", "IBM Plex Sans Arabic", sans-serif;
+@layer base {
+    :root {
+        --color-wp-primary: #128C7E;
+        --color-wp-secondary: #075E54;
+        --color-wp-accent: #25D366;
+    }
+
+    body {
+        @apply bg-white text-gray-900;
+    }
 }
-
-@custom-variant dark (&:where(.dark, .dark *));
-
-/* Standard CSS resets and custom styles */
 
 body {
     font-family: 'Plus Jakarta Sans', 'IBM Plex Sans Arabic', sans-serif;
