@@ -749,8 +749,13 @@ const transformChat = (c, instanceName) => {
             } else if (realJid) {
                 finalName = `+${realJid.split('@')[0]}`;
             } else {
-                // Formatting fallback: DO NOT add + to raw LIDs to avoid confusion with phone numbers
-                finalName = `Contact (${idPart.substring(0, 5)}...)`;
+                // Last resort: Use last message preview as "name" for context
+                const lastMsgPreview = c.lastMessage?.message?.conversation || c.lastMessage?.body || '';
+                if (lastMsgPreview && lastMsgPreview.length > 0) {
+                    finalName = lastMsgPreview.substring(0, 25) + (lastMsgPreview.length > 25 ? '...' : '');
+                } else {
+                    finalName = `جهة اتصال (${idPart.substring(0, 5)}...)`;
+                }
             }
         } else if (domain === 'newsletter') {
             finalName = `Channel: ${idPart.substring(0, 8)}...`;
