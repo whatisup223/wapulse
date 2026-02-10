@@ -6,6 +6,9 @@ import { JSONFilePreset } from 'lowdb/node';
 import cron from 'node-cron';
 import axios from 'axios';
 import path from 'path';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import multer from 'multer';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
@@ -1139,6 +1142,184 @@ app.delete('/api/campaigns/:id', async (req, res) => {
     db.data.campaigns = db.data.campaigns.filter(c => c.id !== id);
     await db.write();
     res.json({ success: true });
+});
+
+// ==================== ADMIN PANEL APIs ====================
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+// Multer configuration for file uploads
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, 'uploads/');
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+const upload = multer({ storage });
+
+// Admin Authentication Middleware
+const adminAuth = (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+        return res.status(401).json({ message: 'غير مصرح' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.adminId = decoded.id;
+        next();
+    } catch (error) {
+        res.status(401).json({ message: 'رمز غير صالح' });
+    }
+};
+
+// Admin Login
+app.post('/api/admin/login', async (req, res) => {
+    const { email, password } = req.body;
+
+    // For demo: admin@wapulse.com / admin123
+    if (email === 'admin@wapulse.com' && password === 'admin123') {
+        const token = jwt.sign({ id: 'admin_1', email }, JWT_SECRET, { expiresIn: '7d' });
+        res.json({ token, message: 'تم تسجيل الدخول بنجاح' });
+    } else {
+        res.status(401).json({ message: 'بيانات الدخول غير صحيحة' });
+    }
+});
+
+// Get Admin Stats
+app.get('/api/admin/stats', adminAuth, async (req, res) => {
+    await db.read();
+
+    const stats = {
+        totalUsers: db.data.users?.length || 0,
+        activeUsers: db.data.users?.filter(u => u.status === 'active').length || 0,
+        totalRevenue: 12450, // Mock data
+        totalCampaigns: db.data.campaigns?.length || 0,
+    };
+
+    res.json(stats);
+});
+
+// ==================== USER MANAGEMENT ====================
+
+// Get All Users
+app.get('/api/admin/users', adminAuth, async (req, res) => {
+    await db.read();
+    const users = db.data.users || [];
+    res.json(users);
+});
+
+// Create User
+app.post('/api/admin/users', adminAuth, async (req, res) => {
+    await db.read();
+
+    const newUser = {
+        id: `user_${Date.now()}`,
+        ...req.body,
+        createdAt: new Date().toISOString(),
+        status: 'active'
+    };
+
+    db.data.users = db.data.users || [];
+    db.data.users.push(newUser);
+    await db.write();
+
+    res.json({ message: 'تم إضافة المستخدم بنجاح', user: newUser });
+});
+
+// Update User
+app.put('/api/admin/users/:id', adminAuth, async (req, res) => {
+    await db.read();
+
+    const userIndex = db.data.users.findIndex(u => u.id === req.params.id);
+    if (userIndex === -1) {
+        return res.status(404).json({ message: 'المستخدم غير موجود' });
+    }
+
+    db.data.users[userIndex] = { ...db.data.users[userIndex], ...req.body };
+    await db.write();
+
+    res.json({ message: 'تم تحديث المستخدم بنجاح', user: db.data.users[userIndex] });
+});
+
+// Delete User
+app.delete('/api/admin/users/:id', adminAuth, async (req, res) => {
+    await db.read();
+
+    db.data.users = db.data.users.filter(u => u.id !== req.params.id);
+    await db.write();
+
+    res.json({ message: 'تم حذف المستخدم بنجاح' });
+});
+
+// Toggle User Status
+app.patch('/api/admin/users/:id/toggle-status', adminAuth, async (req, res) => {
+    await db.read();
+
+    const user = db.data.users.find(u => u.id === req.params.id);
+    if (!user) {
+        return res.status(404).json({ message: 'المستخدم غير موجود' });
+    }
+
+    user.status = req.body.status;
+    await db.write();
+
+    res.json({ message: 'تم تحديث الحالة بنجاح', user });
+});
+
+// ==================== BRANDING SETTINGS ====================
+
+// Get Branding Settings
+app.get('/api/admin/branding', adminAuth, async (req, res) => {
+    await db.read();
+    const branding = db.data.settings?.branding || {};
+    res.json(branding);
+});
+
+// Update Branding Settings
+app.post('/api/admin/branding', adminAuth, upload.fields([
+    { name: 'logo', maxCount: 1 },
+    { name: 'favicon', maxCount: 1 }
+]), async (req, res) => {
+    await db.read();
+
+    const branding = {
+        siteName: req.body.siteName,
+        siteDescription: req.body.siteDescription,
+        primaryColor: req.body.primaryColor,
+        secondaryColor: req.body.secondaryColor,
+        accentColor: req.body.accentColor,
+        logo: req.files?.logo?.[0]?.path || db.data.settings?.branding?.logo,
+        favicon: req.files?.favicon?.[0]?.path || db.data.settings?.branding?.favicon,
+    };
+
+    db.data.settings = db.data.settings || {};
+    db.data.settings.branding = branding;
+    await db.write();
+
+    res.json({ message: 'تم حفظ الإعدادات بنجاح', branding });
+});
+
+// ==================== CONTENT MANAGEMENT ====================
+
+// Get Content
+app.get('/api/admin/content', adminAuth, async (req, res) => {
+    await db.read();
+    const content = db.data.settings?.content || {};
+    res.json(content);
+});
+
+// Update Content
+app.post('/api/admin/content', adminAuth, async (req, res) => {
+    await db.read();
+
+    db.data.settings = db.data.settings || {};
+    db.data.settings.content = req.body;
+    await db.write();
+
+    res.json({ message: 'تم حفظ المحتوى بنجاح' });
 });
 
 // Serve frontend in production

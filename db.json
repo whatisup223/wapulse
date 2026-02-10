@@ -1,0 +1,17 @@
+{
+  "campaigns": [],
+  "contacts": [],
+  "settings": {},
+  "jidLinks": [],
+  "chats": [],
+  "messages": [],
+  "users": [
+    {
+      "id": "admin_1",
+      "email": "admin@marketation.sa",
+      "password": "password123",
+      "name": "A. Mansour",
+      "role": "Administrator"
+    }
+  ]
+}
