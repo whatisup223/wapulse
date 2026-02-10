@@ -664,7 +664,12 @@ const transformChat = (c, instanceName) => {
     const [idPart, domain] = fullJid.split('@');
 
     // Name Resolution Logic
-    let finalName = c.name || c.pushName || c.pushname || c.verifiedName || c.lastMessage?.pushName;
+    // IMPORTANT: Ignore owner's name/Você from lastMessage.pushName if it's fromMe
+    const isFromMe = c.lastMessage?.key?.fromMe || c.lastMessage?.fromMe || false;
+    let pushName = (c.pushName || c.pushname || c.verifiedName);
+    if (!pushName && !isFromMe) pushName = c.lastMessage?.pushName;
+
+    let finalName = c.name || pushName;
 
     // Check contacts cache if name missing
     if (!finalName) {
@@ -674,14 +679,16 @@ const transformChat = (c, instanceName) => {
 
     // Advanced Formatting for IDs acting as names
     if (!finalName || finalName === idPart || finalName.startsWith('lid_') || /^[a-zA-Z0-9_-]{15,}$/.test(finalName)) {
-        if (domain === 's.whatsapp.net' || (domain === 'lid' && /^\d+$/.test(idPart))) {
+        if (domain === 's.whatsapp.net') {
             const digits = idPart.replace(/\D/g, '');
             if (digits.length >= 7) finalName = `+${digits}`;
             else finalName = idPart;
+        } else if (domain === 'lid') {
+            // If it's an LID and we have a name in pushName, use it, otherwise don't format as phone
+            if (pushName && !/^\d+$/.test(pushName)) finalName = pushName;
+            else finalName = idPart;
         } else if (domain === 'newsletter') {
             finalName = `Channel: ${idPart.substring(0, 8)}...`;
-        } else if (c.pushName || c.pushname || c.lastMessage?.pushName) {
-            finalName = c.pushName || c.pushname || c.lastMessage?.pushName;
         } else {
             finalName = idPart;
         }
@@ -756,9 +763,28 @@ app.get('/api/chats/:instanceName', async (req, res) => {
 
         if (!seenIdentities.has(identity)) {
             const cluster = chats.filter(c => linkedIds.includes(c.id));
-            const bestChat = cluster.find(c => c.id.includes('@s.whatsapp.net')) || cluster[0];
 
-            // Background Resolution for missing names or numeric placeholders
+            // Priority 1: Real JID Chat Record
+            // Priority 2: LID Chat Record but forcefully updated with associated JID info
+            let bestChat = cluster.find(c => c.id.includes('@s.whatsapp.net')) || cluster[0];
+
+            const realJid = linkedIds.find(id => id.includes('@s.whatsapp.net'));
+            if (realJid && bestChat.id.includes('@lid')) {
+                // FORCE: We have an LID chat but we know it belongs to this JID
+                const jidIdPart = realJid.split('@')[0];
+                bestChat = {
+                    ...bestChat,
+                    id: realJid, // Swap LID with JID
+                    name: bestChat.name.startsWith('+') ? `+${jidIdPart}` : bestChat.name // Try to use phone number
+                };
+            }
+
+            // Final Name Polish: Ensure names don't stay as long IDs if we have a real JID
+            if (bestChat.name.length > 20 && realJid) {
+                bestChat.name = `+${realJid.split('@')[0]}`;
+            }
+
+            // Background Resolution for missing names
             if (bestChat.name === bestChat.id.split('@')[0] || bestChat.name.startsWith('+')) {
                 fetchProfile(instanceName, bestChat.id).then(async (prof) => {
                     if (prof) {
