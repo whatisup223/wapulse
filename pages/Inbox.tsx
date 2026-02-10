@@ -381,8 +381,8 @@ const Inbox: React.FC<InboxProps> = ({ language }) => {
 
   useEffect(() => {
     if (!currentSession) return;
-    // Refresh chat list every 15 seconds (reduced from 8 seconds)
-    const chatInterval = setInterval(() => fetchChats(false), 15000);
+    // Refresh chat list every 60 seconds (reduced from 15 seconds)
+    const chatInterval = setInterval(() => fetchChats(false), 60000);
     return () => clearInterval(chatInterval);
   }, [currentSession, fetchChats]);
 
@@ -390,8 +390,8 @@ const Inbox: React.FC<InboxProps> = ({ language }) => {
     if (selectedChatId && currentSession) {
       setMessageText('');
       fetchMessages(selectedChatId);
-      // Refresh messages every 10 seconds (reduced from 5 seconds)
-      const msgInterval = setInterval(() => fetchMessages(selectedChatId, true), 10000);
+      // Refresh messages every 30 seconds (reduced from 10 seconds)
+      const msgInterval = setInterval(() => fetchMessages(selectedChatId, true), 30000);
       return () => clearInterval(msgInterval);
     }
   }, [selectedChatId, fetchMessages, currentSession]);

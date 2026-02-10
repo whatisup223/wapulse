@@ -233,29 +233,30 @@ async function processQueue() {
     try {
         await db.read();
         const campaigns = db.data.campaigns;
-
         const now = new Date();
-        // Priority 1: Current active campaigns
-        // Priority 2: Scheduled campaigns that reached their time
-        const activeCampaign = campaigns.find(c => {
-            if (c.status === 'in_progress') return true;
-            if (c.status === 'scheduled' && c.scheduledAt) {
-                const scheduledTime = new Date(c.scheduledAt);
-                return scheduledTime <= now;
-            }
-            return false;
-        });
+
+        // 1. Promote due scheduled campaigns to in_progress
+        const dueCampaigns = campaigns.filter(c =>
+            c.status === 'scheduled' &&
+            c.scheduledAt &&
+            new Date(c.scheduledAt) <= now
+        );
+
+        if (dueCampaigns.length > 0) {
+            console.log(`Found ${dueCampaigns.length} due campaigns. Starting them...`);
+            dueCampaigns.forEach(c => {
+                c.status = 'in_progress';
+                console.log(`Starting scheduled campaign: ${c.name}`);
+            });
+            await db.write();
+        }
+
+        // 2. Pick the first in_progress campaign to process
+        const activeCampaign = campaigns.find(c => c.status === 'in_progress');
 
         if (!activeCampaign) {
             isProcessing = false;
             return;
-        }
-
-        // Auto-start scheduled campaign
-        if (activeCampaign.status === 'scheduled') {
-            console.log(`Starting scheduled campaign: ${activeCampaign.name}`);
-            activeCampaign.status = 'in_progress';
-            await db.write();
         }
 
         const nextRecipient = activeCampaign.recipientsList.find(r => r.status === 'pending');
