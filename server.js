@@ -23,6 +23,9 @@ const defaultData = {
     campaigns: [],
     contacts: [],
     settings: {},
+    jidLinks: [], // { instanceName, jid, lid }
+    chats: [],
+    messages: [],
     users: [
         {
             id: 'admin_1',
@@ -40,6 +43,10 @@ await db.read();
 db.data = db.data || defaultData;
 if (!db.data.users) db.data.users = defaultData.users;
 if (!db.data.settings) db.data.settings = defaultData.settings;
+if (!db.data.jidLinks) db.data.jidLinks = [];
+if (!db.data.chats) db.data.chats = [];
+if (!db.data.messages) db.data.messages = [];
+if (!db.data.contacts) db.data.contacts = [];
 await db.write();
 
 const EVOLUTION_URL = process.env.VITE_EVOLUTION_URL;
@@ -48,12 +55,37 @@ const EVOLUTION_API_KEY = process.env.VITE_EVOLUTION_API_KEY;
 // Helper: Normalize JID (Remove device suffix and standardize)
 const normalizeJid = (jid) => {
     if (!jid || typeof jid !== 'string') return '';
-    const clean = jid.toLowerCase().trim();
-    if (clean.includes('@broadcast') || clean.includes('@status')) return '';
+    let clean = jid.toLowerCase().trim();
+    // Remove :1, :2 etc device suffixes
+    clean = clean.split(':')[0].split('@')[0] + (clean.includes('@') ? '@' + clean.split('@')[1] : '');
 
-    const [idPart, domain] = clean.split('@');
-    const cleanId = idPart.split(':')[0]; // remove :1, :2 etc
-    return domain ? `${cleanId}@${domain}` : cleanId;
+    if (clean.includes('@broadcast') || clean.includes('@status')) return '';
+    return clean;
+};
+
+// Helper: Get Linked IDs (find if JID has a LID or vice versa)
+const getLinkedIds = (id, instanceName) => {
+    const links = db.data.jidLinks || [];
+    const related = links.filter(l => l.instanceName === instanceName && (l.jid === id || l.lid === id));
+    const ids = new Set([id]);
+    related.forEach(l => {
+        ids.add(l.jid);
+        ids.add(l.lid);
+    });
+    return Array.from(ids).filter(x => !!x);
+};
+
+// Helper: Update JID/LID mapping
+const updateJidLink = async (instanceName, jid, lid) => {
+    if (!jid || !lid || jid === lid) return;
+    if (!db.data.jidLinks) db.data.jidLinks = [];
+
+    const exists = db.data.jidLinks.find(l => l.instanceName === instanceName && l.jid === jid && l.lid === lid);
+    if (!exists) {
+        console.log(`🔗 Linking JID: ${jid} with LID: ${lid}`);
+        db.data.jidLinks.push({ instanceName, jid, lid, updatedAt: new Date().toISOString() });
+        await db.write();
+    }
 };
 
 // Helper: Get User ID from Headers
@@ -257,7 +289,13 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                     db.data.chats.unshift(chat);
                 } else {
                     // New Chat Placeholder
-                    db.data.chats.unshift({
+                    const pc = transformChat({
+                        id: remoteJid,
+                        pushName: message.pushName,
+                        lastMessage: { message: { conversation: msgBody }, messageTimestamp: timestamp }
+                    }, instanceName);
+
+                    db.data.chats.unshift(pc || {
                         id: remoteJid,
                         instanceName,
                         name: message.pushName || remoteJid.split('@')[0],
@@ -300,7 +338,16 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                 const contactData = Array.isArray(data) ? data : [data];
 
                 for (const c of contactData) {
-                    const cId = c.id || c.remoteJid;
+                    const cId = normalizeJid(c.id || c.remoteJid);
+                    if (!cId) continue;
+
+                    // Try to link if alternative ID exists
+                    const altId = normalizeJid(c.remoteJid || c.jid);
+                    if (altId && altId !== cId) {
+                        if (cId.includes('@lid') && altId.includes('@s.whatsapp.net')) updateJidLink(instanceName, altId, cId);
+                        else if (cId.includes('@s.whatsapp.net') && altId.includes('@lid')) updateJidLink(instanceName, cId, altId);
+                    }
+
                     const existingC = db.data.contacts.find(x => x.id === cId && x.instanceName === instanceName);
 
                     if (existingC) {
@@ -507,15 +554,30 @@ const transformChat = (c, instanceName) => {
     const fullJid = normalizeJid(rawId);
     if (!fullJid) return null;
 
+    // Try to find a JID/LID mapping in the record itself
+    const altId = normalizeJid(c.jid || c.remoteJid || c.id);
+    if (fullJid.includes('@lid') && altId.includes('@s.whatsapp.net')) {
+        updateJidLink(instanceName, altId, fullJid);
+    } else if (fullJid.includes('@s.whatsapp.net') && altId.includes('@lid')) {
+        updateJidLink(instanceName, fullJid, altId);
+    }
+
     const [idPart] = fullJid.split('@');
 
-    // Improved Name Logic: detect if it's a numeric ID and format as phone
-    const digits = idPart.replace(/\D/g, '');
-    let finalName = c.name || c.pushName || c.pushname || idPart;
+    // Name Resolution Logic
+    let finalName = c.name || c.pushName || c.pushname || c.verifiedName;
 
-    // If name is just numbers, or LID prefix, try to clean it
-    if (/^\d+$/.test(finalName) || finalName.startsWith('lid_')) {
+    // Check contacts cache if name missing
+    if (!finalName) {
+        const contact = db.data.contacts.find(x => x.id === fullJid && x.instanceName === instanceName);
+        if (contact) finalName = contact.name;
+    }
+
+    // Default to phone-friendly formatting if still no name
+    if (!finalName || /^\d+$/.test(finalName) || finalName.startsWith('lid_')) {
+        const digits = idPart.replace(/\D/g, '');
         if (digits.length >= 7) finalName = `+${digits}`;
+        else finalName = idPart;
     }
 
     return {
@@ -539,67 +601,59 @@ app.get('/api/chats/:instanceName', async (req, res) => {
     const forceSync = req.query.force === 'true';
 
     await db.read();
-
-    // Ensure collections
     db.data = db.data || {};
     if (!db.data.chats) db.data.chats = [];
 
-    // 1. Try Cache (if not forcing)
-    let cachedChats = db.data.chats.filter(c => c.instanceName === instanceName);
-
-    // 2. If Cache Empty OR Force Sync, Sync from Evolution
-    if (cachedChats.length === 0 || forceSync) {
-        console.log(`Layer 2 Sync: Fetching chats for ${instanceName} (Force: ${forceSync})`);
-
+    // 1. Fetch from Evolution if needed
+    if (db.data.chats.filter(c => c.instanceName === instanceName).length === 0 || forceSync) {
         try {
-            // Encode instance name to handle Arabic characters and spaces safely
             const encodedInstanceName = encodeURIComponent(instanceName);
             const response = await axios.post(`${EVOLUTION_URL}/chat/findChats/${encodedInstanceName}`, {}, {
                 headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' }
             });
 
-            // Robust Data Extraction
-            let rawChats = [];
-            if (Array.isArray(response.data)) {
-                rawChats = response.data;
-            } else if (response.data && Array.isArray(response.data.records)) {
-                rawChats = response.data.records;
-            } else if (response.data && Array.isArray(response.data.data)) {
-                rawChats = response.data.data;
-            }
-
-            console.log(`Evolution returned ${rawChats.length} chats.`);
-
+            const rawChats = response.data?.records || response.data?.data || (Array.isArray(response.data) ? response.data : []);
             const processed = rawChats.map(c => transformChat(c, instanceName)).filter(c => c !== null);
 
-            // Upsert into DB
-            let upsertCount = 0;
             for (const pc of processed) {
-                const existingIdx = db.data.chats.findIndex(c => c.id === pc.id && c.instanceName === instanceName);
-                if (existingIdx > -1) {
-                    db.data.chats[existingIdx] = { ...db.data.chats[existingIdx], ...pc };
-                } else {
-                    db.data.chats.push(pc);
-                }
-                upsertCount++;
+                const idx = db.data.chats.findIndex(c => c.id === pc.id && c.instanceName === instanceName);
+                if (idx > -1) db.data.chats[idx] = { ...db.data.chats[idx], ...pc };
+                else db.data.chats.push(pc);
             }
-
-            if (upsertCount > 0) await db.write();
-
-            // Refresh local variable after update
-            cachedChats = db.data.chats.filter(c => c.instanceName === instanceName);
-
+            await db.write();
         } catch (e) {
-            console.error('Sync Error:', e.message);
-            if (e.response) {
-                console.error('Evolution Error Data:', JSON.stringify(e.response.data));
-            }
+            console.error('Chat Sync Error:', e.message);
         }
     }
 
-    // Sort by timestamp desc
-    cachedChats.sort((a, b) => b.timestamp - a.timestamp);
-    res.json(cachedChats);
+    // 2. Local Deduplication Logic (JID & LID merging)
+    const chats = db.data.chats.filter(c => c.instanceName === instanceName);
+    const unifiedChats = [];
+    const seenIdentities = new Set();
+
+    // Sort by timestamp to process newest first
+    const sorted = [...chats].sort((a, b) => b.timestamp - a.timestamp);
+
+    for (const chat of sorted) {
+        const linkedIds = getLinkedIds(chat.id, instanceName);
+        const identity = linkedIds.sort().join('|'); // Canonical cluster ID
+
+        if (!seenIdentities.has(identity)) {
+            // Find all related chats to sum unread and find best name
+            const cluster = chats.filter(c => linkedIds.includes(c.id));
+            const bestChat = cluster.find(c => c.id.includes('@s.whatsapp.net')) || cluster[0];
+
+            unifiedChats.push({
+                ...bestChat,
+                unreadCount: cluster.reduce((sum, c) => sum + (c.unreadCount || 0), 0),
+                timestamp: Math.max(...cluster.map(c => c.timestamp || 0)),
+                lastMessage: cluster.sort((a, b) => b.timestamp - a.timestamp)[0].lastMessage
+            });
+            seenIdentities.add(identity);
+        }
+    }
+
+    res.json(unifiedChats);
 });
 
 /* GET /api/messages/:instanceName/:chatId
@@ -610,59 +664,50 @@ app.get('/api/messages/:instanceName/:chatId', async (req, res) => {
     const { instanceName, chatId } = req.params;
     await db.read();
 
-    if (!db.data.messages) db.data.messages = [];
-
-    // Normalize Chat ID (remove potential URL encoding issues)
     const targetId = normalizeJid(decodeURIComponent(chatId));
-
     if (!targetId) return res.json([]);
 
-    // 1. Get from Cache
-    let cachedMsgs = db.data.messages.filter(m => m.instanceName === instanceName && m.chatId === targetId);
+    // 1. Identify all linked IDs (JID + LID)
+    const allLinkedIds = getLinkedIds(targetId, instanceName);
 
-    // 2. If very few messages, try to fetch history (Auto-backfill)
-    if (cachedMsgs.length < 10) {
-        console.log(`Low cache for ${targetId}. Backfilling...`);
-        try {
-            // Encode instance name
-            const encodedInstanceName = encodeURIComponent(instanceName);
-            const response = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${encodedInstanceName}`, {
-                where: { remoteJid: targetId },
-                limit: 50 // Fetch last 50
-            }, {
-                headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' }
-            });
+    // 2. Unified Background Sync if cache is low for ANY of the IDs
+    const cachedMsgs = db.data.messages.filter(m => m.instanceName === instanceName && allLinkedIds.includes(m.chatId));
 
-            const rawMsgs = response.data?.messages || response.data?.records || response.data || [];
-            if (Array.isArray(rawMsgs)) {
-                let newCount = 0;
-                for (const m of rawMsgs) {
-                    const mId = m.key?.id || m.id;
-                    if (!db.data.messages.find(ex => ex.id === mId)) {
-                        db.data.messages.push({
-                            id: mId,
-                            instanceName,
-                            chatId: targetId,
-                            body: m.message?.conversation || m.message?.extendedTextMessage?.text || m.body || '',
-                            fromMe: m.key?.fromMe || m.fromMe || false,
-                            timestamp: m.messageTimestamp || m.timestamp || 0,
-                            status: 'history_sync'
-                        });
-                        newCount++;
+    if (cachedMsgs.length < 15) {
+        for (const idToSync of allLinkedIds) {
+            try {
+                const response = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${encodeURIComponent(instanceName)}`, {
+                    where: { remoteJid: idToSync },
+                    limit: 50
+                }, { headers: { 'apikey': EVOLUTION_API_KEY } });
+
+                const rawMsgs = response.data?.messages || response.data?.records || (Array.isArray(response.data) ? response.data : []);
+                if (Array.isArray(rawMsgs)) {
+                    for (const m of rawMsgs) {
+                        const mId = m.key?.id || m.id;
+                        if (!db.data.messages.find(ex => ex.id === mId)) {
+                            db.data.messages.push({
+                                id: mId,
+                                instanceName,
+                                chatId: idToSync,
+                                body: m.message?.conversation || m.message?.extendedTextMessage?.text || m.body || '',
+                                fromMe: m.key?.fromMe || m.fromMe || false,
+                                timestamp: m.messageTimestamp || m.timestamp || 0,
+                                status: 'history_sync'
+                            });
+                        }
                     }
                 }
-                if (newCount > 0) await db.write();
-            }
-        } catch (e) {
-            console.error('History Sync Error:', e.message);
+            } catch (e) { /* silent fail for background sync */ }
         }
+        await db.write();
     }
 
-    // Re-read cache
-    cachedMsgs = db.data.messages.filter(m => m.instanceName === instanceName && m.chatId === targetId);
-    cachedMsgs.sort((a, b) => a.timestamp - b.timestamp);
+    // 3. Return merged results from all linked IDs
+    const finalMsgs = db.data.messages.filter(m => m.instanceName === instanceName && allLinkedIds.includes(m.chatId));
+    finalMsgs.sort((a, b) => a.timestamp - b.timestamp);
 
-    res.json(cachedMsgs);
+    res.json(finalMsgs);
 });
 
 // ---------------------------------------------------------

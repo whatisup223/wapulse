@@ -2,6 +2,7 @@
   "name": "wapulse-saas-dashboard",
   "version": "1.0.0",
   "description": "WaPulse - WhatsApp Marketing Dashboard",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "dev": "vite",
