@@ -736,6 +736,7 @@ const transformChat = (c, instanceName) => {
     // Advanced Formatting for IDs acting as names
     if (!finalName || finalName === idPart || finalName.startsWith('lid_') || /^[a-zA-Z0-9_-]{15,}$/.test(finalName)) {
         if (domain === 's.whatsapp.net') {
+            // Always format as phone number for regular WhatsApp IDs
             const digits = idPart.replace(/\D/g, '');
             if (digits.length >= 7) finalName = `+${digits}`;
             else finalName = idPart;
@@ -749,7 +750,7 @@ const transformChat = (c, instanceName) => {
             } else if (realJid) {
                 finalName = `+${realJid.split('@')[0]}`;
             } else {
-                // Last resort: Use last message preview as "name" for context
+                // Last resort for LIDs only: Use last message preview as "name" for context
                 const lastMsgPreview = c.lastMessage?.message?.conversation || c.lastMessage?.body || '';
                 if (lastMsgPreview && lastMsgPreview.length > 0) {
                     finalName = lastMsgPreview.substring(0, 25) + (lastMsgPreview.length > 25 ? '...' : '');
