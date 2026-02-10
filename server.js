@@ -124,6 +124,51 @@ const updateJidLink = async (instanceName, jid, lid) => {
     }
 };
 
+// Helper: Fetch Contacts and Link JID/LID
+const fetchAndLinkContacts = async (instanceName) => {
+    try {
+        console.log(`📇 Fetching contacts to build JID/LID map for ${instanceName}...`);
+        const response = await axios.post(`${EVOLUTION_URL}/contact/fetchContacts/${encodeURIComponent(instanceName)}`, {}, {
+            headers: { 'apikey': EVOLUTION_API_KEY }
+        });
+
+        const contacts = response.data || [];
+        let linkCount = 0;
+
+        for (const c of contacts) {
+            const jid = normalizeJid(c.id || c.jid || c.remoteJid);
+            const lid = normalizeJid(c.lid);
+
+            if (jid && lid && jid.includes('@s.whatsapp.net') && lid.includes('@lid')) {
+                const exists = db.data.jidLinks.find(l => l.instanceName === instanceName && l.jid === jid && l.lid === lid);
+                if (!exists) {
+                    db.data.jidLinks.push({ instanceName, jid, lid, updatedAt: new Date().toISOString() });
+                    linkCount++;
+                }
+
+                // Also cache the contact name while we are at it
+                const existingC = db.data.contacts.find(x => x.id === jid && x.instanceName === instanceName);
+                const name = c.name || c.pushName || c.pushname || c.verifiedName;
+                if (name) {
+                    if (existingC) existingC.name = name;
+                    else db.data.contacts.push({ id: jid, instanceName, name, profilePicUrl: c.profilePictureUrl || null });
+
+                    // Duplicate name to LID for UI lookup
+                    const existingLidC = db.data.contacts.find(x => x.id === lid && x.instanceName === instanceName);
+                    if (existingLidC) existingLidC.name = name;
+                    else db.data.contacts.push({ id: lid, instanceName, name, profilePicUrl: c.profilePictureUrl || null });
+                }
+            }
+        }
+        if (linkCount > 0) {
+            console.log(`🔗 Created ${linkCount} new JID/LID links from contacts.`);
+            await db.write();
+        }
+    } catch (e) {
+        console.error('❌ Contact Sync Error:', e.message);
+    }
+};
+
 // Helper: Get User ID from Headers
 const getUserId = (req) => {
     return req.headers['x-user-id'] || req.header('X-User-Id');
@@ -289,6 +334,14 @@ app.post('/api/webhooks/evolution', async (req, res) => {
                 if (!remoteJid) {
                     console.log('🚫 Skipping message for status/broadcast');
                     break;
+                }
+
+                // Linking Logic: If message contains both JID and LID info
+                const messageJid = normalizeJid(message.key?.remoteJid);
+                const participant = normalizeJid(message.participant);
+                if (messageJid && participant && messageJid !== participant) {
+                    if (messageJid.includes('@s.whatsapp.net') && participant.includes('@lid')) updateJidLink(instanceName, messageJid, participant);
+                    else if (messageJid.includes('@lid') && participant.includes('@s.whatsapp.net')) updateJidLink(instanceName, participant, messageJid);
                 }
 
                 const msgId = message.key?.id || message.id;
@@ -655,6 +708,8 @@ app.get('/api/chats/:instanceName', async (req, res) => {
             console.log(`🧹 Cleaning local cache for ${instanceName}`);
             db.data.chats = db.data.chats.filter(c => c.instanceName !== instanceName);
             db.data.messages = db.data.messages.filter(m => m.instanceName !== instanceName);
+            // On force sync, always rebuild the identity map
+            await fetchAndLinkContacts(instanceName);
         }
         try {
             const encodedInstanceName = encodeURIComponent(instanceName);
