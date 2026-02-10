@@ -232,7 +232,7 @@ const CreateCampaign: React.FC<CreateCampaignProps> = ({ language }) => {
                     minDelay,
                     maxDelay,
                     rotationCount,
-                    scheduledAt: scheduleEnabled ? (document.querySelector('input[type="datetime-local"]') as HTMLInputElement)?.value : null,
+                    scheduledAt: scheduleEnabled ? new Date((document.querySelector('input[type="datetime-local"]') as HTMLInputElement)?.value).toISOString() : null,
                     type: dynamicType
                 })
             });
