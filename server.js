@@ -56,11 +56,47 @@ const EVOLUTION_API_KEY = process.env.VITE_EVOLUTION_API_KEY;
 const normalizeJid = (jid) => {
     if (!jid || typeof jid !== 'string') return '';
     let clean = jid.toLowerCase().trim();
-    // Remove :1, :2 etc device suffixes
-    clean = clean.split(':')[0].split('@')[0] + (clean.includes('@') ? '@' + clean.split('@')[1] : '');
 
-    if (clean.includes('@broadcast') || clean.includes('@status')) return '';
-    return clean;
+    // Remove :1, :2 etc device suffixes safely (BEFORE splitting domains)
+    clean = clean.split(':')[0];
+
+    // Handle cases where ID is just digits without domain
+    if (!clean.includes('@')) {
+        if (/^\d{10,14}$/.test(clean)) clean += '@s.whatsapp.net';
+        else if (/^\d{15,}$/.test(clean)) clean += '@lid'; // Very long digits are usually LIDs
+        else return clean;
+    }
+
+    const [userId, domain] = clean.split('@');
+
+    // Map evolution/whatsapp domain variants
+    let finalDomain = domain;
+    if (domain === 'newsletter.net') finalDomain = 'newsletter';
+    if (domain === 'c.us') finalDomain = 's.whatsapp.net';
+
+    if (finalDomain === 'broadcast' || finalDomain === 'status') return '';
+    return `${userId}@${finalDomain}`;
+};
+
+// Helper: Fetch Profile Info from Evolution (Name, JID, LID)
+const fetchProfile = async (instanceName, chatId) => {
+    try {
+        const response = await axios.post(`${EVOLUTION_URL}/contact/profile/${encodeURIComponent(instanceName)}`, {
+            number: chatId
+        }, { headers: { 'apikey': EVOLUTION_API_KEY } });
+
+        const data = response.data;
+        if (!data) return null;
+
+        return {
+            name: data.pushName || data.name || data.verifiedName || null,
+            jid: normalizeJid(data.jid),
+            lid: normalizeJid(data.lid),
+            profilePicUrl: data.profilePicUrl || data.profilePictureUrl || null
+        };
+    } catch (e) {
+        return null;
+    }
 };
 
 // Helper: Get Linked IDs (find if JID has a LID or vice versa)
@@ -554,15 +590,14 @@ const transformChat = (c, instanceName) => {
     const fullJid = normalizeJid(rawId);
     if (!fullJid) return null;
 
-    // Try to find a JID/LID mapping in the record itself
-    const altId = normalizeJid(c.jid || c.remoteJid || c.id);
-    if (fullJid.includes('@lid') && altId.includes('@s.whatsapp.net')) {
-        updateJidLink(instanceName, altId, fullJid);
-    } else if (fullJid.includes('@s.whatsapp.net') && altId.includes('@lid')) {
-        updateJidLink(instanceName, fullJid, altId);
+    // Direct extraction of JID/LID from record if available
+    const jid = normalizeJid(c.jid);
+    const lid = normalizeJid(c.lid);
+    if (jid && lid && jid !== lid) {
+        updateJidLink(instanceName, jid, lid);
     }
 
-    const [idPart] = fullJid.split('@');
+    const [idPart, domain] = fullJid.split('@');
 
     // Name Resolution Logic
     let finalName = c.name || c.pushName || c.pushname || c.verifiedName;
@@ -573,11 +608,19 @@ const transformChat = (c, instanceName) => {
         if (contact) finalName = contact.name;
     }
 
-    // Default to phone-friendly formatting if still no name
-    if (!finalName || /^\d+$/.test(finalName) || finalName.startsWith('lid_')) {
-        const digits = idPart.replace(/\D/g, '');
-        if (digits.length >= 7) finalName = `+${digits}`;
-        else finalName = idPart;
+    // Advanced Formatting for IDs acting as names
+    if (!finalName || finalName === idPart || finalName.startsWith('lid_') || /^[a-zA-Z0-9_-]{15,}$/.test(finalName)) {
+        if (domain === 's.whatsapp.net' || (domain === 'lid' && /^\d+$/.test(idPart))) {
+            const digits = idPart.replace(/\D/g, '');
+            if (digits.length >= 7) finalName = `+${digits}`;
+            else finalName = idPart;
+        } else if (domain === 'newsletter') {
+            finalName = `Channel: ${idPart.substring(0, 8)}...`;
+        } else if (c.pushName || c.pushname) {
+            finalName = c.pushName || c.pushname;
+        } else {
+            finalName = idPart;
+        }
     }
 
     return {
@@ -639,9 +682,23 @@ app.get('/api/chats/:instanceName', async (req, res) => {
         const identity = linkedIds.sort().join('|'); // Canonical cluster ID
 
         if (!seenIdentities.has(identity)) {
-            // Find all related chats to sum unread and find best name
             const cluster = chats.filter(c => linkedIds.includes(c.id));
             const bestChat = cluster.find(c => c.id.includes('@s.whatsapp.net')) || cluster[0];
+
+            // Background Resolution for missing names or numeric placeholders
+            if (bestChat.name === bestChat.id.split('@')[0] || bestChat.name.startsWith('+')) {
+                fetchProfile(instanceName, bestChat.id).then(async (prof) => {
+                    if (prof) {
+                        const idx = db.data.chats.findIndex(x => x.id === bestChat.id && x.instanceName === instanceName);
+                        if (idx > -1) {
+                            if (prof.name) db.data.chats[idx].name = prof.name;
+                            if (prof.profilePicUrl) db.data.chats[idx].profilePicUrl = prof.profilePicUrl;
+                            if (prof.jid && prof.lid) updateJidLink(instanceName, prof.jid, prof.lid);
+                            await db.write();
+                        }
+                    }
+                }).catch(() => { });
+            }
 
             unifiedChats.push({
                 ...bestChat,
@@ -667,18 +724,31 @@ app.get('/api/messages/:instanceName/:chatId', async (req, res) => {
     const targetId = normalizeJid(decodeURIComponent(chatId));
     if (!targetId) return res.json([]);
 
+    console.log(`🔍 Fetching messages for ${targetId} on ${instanceName}...`);
+
     // 1. Identify all linked IDs (JID + LID)
-    const allLinkedIds = getLinkedIds(targetId, instanceName);
+    let allLinkedIds = getLinkedIds(targetId, instanceName);
 
-    // 2. Unified Background Sync if cache is low for ANY of the IDs
-    const cachedMsgs = db.data.messages.filter(m => m.instanceName === instanceName && allLinkedIds.includes(m.chatId));
+    // 2. Discovery: If history is low and only one ID known, try to find the other
+    let currentCount = db.data.messages.filter(m => m.instanceName === instanceName && allLinkedIds.includes(m.chatId)).length;
 
-    if (cachedMsgs.length < 15) {
+    if (currentCount < 5) {
+        console.log(`🕵️ Discovery mode for ${targetId}`);
+        const prof = await fetchProfile(instanceName, targetId);
+        if (prof && prof.jid && prof.lid) {
+            await updateJidLink(instanceName, prof.jid, prof.lid);
+            allLinkedIds = getLinkedIds(targetId, instanceName);
+        }
+    }
+
+    // 3. Unified Background Sync for all discovered IDs
+    if (db.data.messages.filter(m => m.instanceName === instanceName && allLinkedIds.includes(m.chatId)).length < 15) {
+        console.log(`📦 Background history sync for IDs: ${allLinkedIds.join(', ')}`);
         for (const idToSync of allLinkedIds) {
             try {
                 const response = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${encodeURIComponent(instanceName)}`, {
                     where: { remoteJid: idToSync },
-                    limit: 50
+                    limit: 100 // Increased limit for better history
                 }, { headers: { 'apikey': EVOLUTION_API_KEY } });
 
                 const rawMsgs = response.data?.messages || response.data?.records || (Array.isArray(response.data) ? response.data : []);
@@ -698,15 +768,18 @@ app.get('/api/messages/:instanceName/:chatId', async (req, res) => {
                         }
                     }
                 }
-            } catch (e) { /* silent fail for background sync */ }
+            } catch (e) {
+                console.error(`❌ Sync error for ${idToSync}:`, e.message);
+            }
         }
         await db.write();
     }
 
-    // 3. Return merged results from all linked IDs
+    // 4. Return merged results from all linked IDs
     const finalMsgs = db.data.messages.filter(m => m.instanceName === instanceName && allLinkedIds.includes(m.chatId));
     finalMsgs.sort((a, b) => a.timestamp - b.timestamp);
 
+    console.log(`✅ Returning ${finalMsgs.length} messages for ${targetId}`);
     res.json(finalMsgs);
 });
 
