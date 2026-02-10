@@ -51,9 +51,15 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        // 1. Fetch Instances (Agents)
-        const instancesRes = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
-          headers: { 'apikey': EVOLUTION_API_KEY }
+        const savedUser = localStorage.getItem('wapulse_user');
+        const user = savedUser ? JSON.parse(savedUser) : null;
+
+        // 1. Fetch Instances (Agents) (User Isolated)
+        const instancesRes = await fetch('/api/instances', {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(user?.id ? { 'X-User-Id': user.id } : {})
+          }
         });
         const instancesData = await instancesRes.json();
         const connectedInstances = Array.isArray(instancesData)
@@ -131,7 +137,9 @@ const Dashboard: React.FC<DashboardProps> = ({ language }) => {
         await Promise.all(chatPromises);
 
         // 4. Load Campaigns from Backend
-        const campRes = await fetch('/api/campaigns');
+        const campRes = await fetch('/api/campaigns', {
+          headers: user?.id ? { 'X-User-Id': user.id } : {}
+        });
         const storedHistory = await campRes.json();
         const totalCampaigns = storedHistory.length;
         const actualSentMessages = storedHistory.reduce((acc: number, curr: any) => acc + (curr.sentCount || 0), 0);

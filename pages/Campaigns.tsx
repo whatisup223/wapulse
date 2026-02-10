@@ -45,7 +45,13 @@ const Campaigns: React.FC<CampaignsProps> = ({ language }) => {
   const fetchCampaigns = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/campaigns');
+      const savedUser = localStorage.getItem('wapulse_user');
+      const user = savedUser ? JSON.parse(savedUser) : null;
+      const userId = user?.id;
+
+      const res = await fetch('/api/campaigns', {
+        headers: userId ? { 'X-User-Id': userId } : {}
+      });
       const data = await res.json();
       setCampaigns(data);
     } catch (e) { console.error(e); }

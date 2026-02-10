@@ -56,8 +56,15 @@ const CreateCampaign: React.FC<CreateCampaignProps> = ({ language }) => {
     useEffect(() => {
         const fetchInstances = async () => {
             try {
-                const res = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
-                    headers: { 'apikey': EVOLUTION_API_KEY }
+                const savedUser = localStorage.getItem('wapulse_user');
+                const user = savedUser ? JSON.parse(savedUser) : null;
+                if (!user?.id) return;
+
+                const res = await fetch('/api/instances', {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-User-Id': user.id
+                    }
                 });
                 const data = await res.json();
                 const rawList = Array.isArray(data) ? data : [];
@@ -221,9 +228,16 @@ const CreateCampaign: React.FC<CreateCampaignProps> = ({ language }) => {
         }
 
         try {
+            const savedUser = localStorage.getItem('wapulse_user');
+            const user = savedUser ? JSON.parse(savedUser) : null;
+            const userId = user?.id;
+
             const response = await fetch('/api/campaigns', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(userId ? { 'X-User-Id': userId } : {})
+                },
                 body: JSON.stringify({
                     name: campaignName,
                     message,

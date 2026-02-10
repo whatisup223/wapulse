@@ -61,9 +61,9 @@ const AuthLayout: React.FC<AuthLayoutProps> = ({
             </div>
 
             {/* Right Panel - Form Content */}
-            <div className="w-full md:w-1/2 bg-white dark:bg-slate-900 flex items-center justify-center p-8 md:p-12 relative">
-                {/* Floating Controls - Positioned in the form panel */}
-                <div className={`absolute top-6 z-50 flex items-center gap-3 ${isRtl ? 'right-6' : 'left-6'}`}>
+            <div className="w-full md:w-1/2 bg-white dark:bg-slate-900 flex flex-col p-8 md:p-12 relative overflow-y-auto">
+                {/* Controls - Static Position */}
+                <div className="flex items-center gap-3 w-full mb-8 z-50 justify-start">
                     {/* Back to Home */}
                     <button
                         onClick={onBackToHome}
@@ -74,7 +74,7 @@ const AuthLayout: React.FC<AuthLayoutProps> = ({
                     </button>
 
                     {/* Separator */}
-                    <div className="w-px h-8 bg-slate-300 dark:bg-slate-700"></div>
+                    <div className="w-px h-8 bg-slate-300 dark:bg-slate-700 mx-1"></div>
 
                     {/* Language Toggle */}
                     <button
@@ -95,7 +95,9 @@ const AuthLayout: React.FC<AuthLayoutProps> = ({
                     </button>
                 </div>
 
-                {children}
+                <div className="flex-1 flex items-center justify-center w-full">
+                    {children}
+                </div>
             </div>
         </div>
     );

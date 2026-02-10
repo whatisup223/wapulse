@@ -63,9 +63,20 @@ const Contacts: React.FC<ContactsProps> = ({ language }) => {
   const fetchAllContacts = async () => {
     setLoading(true);
     try {
-      // 1. Get WP Instances
-      const instancesRes = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
-        headers: { 'apikey': EVOLUTION_API_KEY }
+      // 0. Get User
+      const savedUser = localStorage.getItem('wapulse_user');
+      const user = savedUser ? JSON.parse(savedUser) : null;
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+
+      // 1. Get WP Instances (User Isolated)
+      const instancesRes = await fetch('/api/instances', {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': user.id
+        }
       });
       const instancesData = await instancesRes.json();
       const connectedInstances = Array.isArray(instancesData)

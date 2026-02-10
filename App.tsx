@@ -271,7 +271,7 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (currentPage) {
       case 'dashboard': return <Dashboard language={language} />;
-      case 'inbox': return <Inbox language={language} userId={activeSessionId} />;
+      case 'inbox': return <Inbox language={language} userId={user?.id} />;
       case 'campaigns': return <Campaigns language={language} />;
       case 'create-campaign': return <CreateCampaign language={language} onBack={() => window.location.hash = '#campaigns'} />;
       case 'contacts': return <Contacts language={language} />;
@@ -300,6 +300,12 @@ const App: React.FC = () => {
     }
   };
 
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setUser(null);
+    setShowLanding(true);
+  };
+
   return (
     <div className={`dashboard-app flex h-screen overflow-hidden theme-transition ${isDarkMode ? 'bg-[#020617] dark' : 'bg-slate-50'}`}>
       <Sidebar
@@ -314,6 +320,7 @@ const App: React.FC = () => {
         isMobileOpen={isMobileSidebarOpen}
         setIsMobileOpen={setIsMobileSidebarOpen}
         language={language}
+        onLogout={handleLogout}
       />
 
       <div className="flex-1 flex flex-col min-w-0 relative">
@@ -324,10 +331,7 @@ const App: React.FC = () => {
           setLanguage={setLanguage}
           userName={user?.name || 'User'}
           userRole={user?.role || 'User'}
-          onLogout={() => {
-            setIsAuthenticated(false);
-            setUser(null);
-          }}
+          onLogout={handleLogout}
           onMenuClick={() => setIsMobileSidebarOpen(true)}
         />
 

@@ -55,8 +55,15 @@ const Connection: React.FC<ConnectionProps> = ({ language, userId }) => {
   // Fetch all instances
   const fetchInstances = async () => {
     try {
-      const res = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
-        headers: { 'apikey': EVOLUTION_API_KEY as string }
+      const savedUser = localStorage.getItem('wapulse_user');
+      const user = savedUser ? JSON.parse(savedUser) : null;
+      if (!user?.id) return;
+
+      const res = await fetch('/api/instances', {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': user.id
+        }
       });
       const data = await res.json();
       const records = Array.isArray(data) ? data : [];
@@ -150,6 +157,20 @@ const Connection: React.FC<ConnectionProps> = ({ language, userId }) => {
           integration: "WHATSAPP-BAILEYS"
         })
       });
+
+      // Link to User
+      const savedUser = localStorage.getItem('wapulse_user');
+      const user = savedUser ? JSON.parse(savedUser) : null;
+      if (user?.id) {
+        await fetch('/api/instances/link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instanceName: newInstanceName,
+            userId: user.id
+          })
+        });
+      }
 
       const data = await response.json();
       console.log('API Response:', data);

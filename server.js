@@ -45,6 +45,11 @@ await db.write();
 const EVOLUTION_URL = process.env.VITE_EVOLUTION_URL;
 const EVOLUTION_API_KEY = process.env.VITE_EVOLUTION_API_KEY;
 
+// Helper: Get User ID from Headers
+const getUserId = (req) => {
+    return req.headers['x-user-id'] || req.header('X-User-Id');
+};
+
 // ---------------------------------------------------------
 // Auth & User Logic
 // ---------------------------------------------------------
@@ -355,21 +360,104 @@ cron.schedule('*/5 * * * * *', () => {
 // API Endpoints
 // ---------------------------------------------------------
 
-// Get all campaigns
+// ---------------------------------------------------------
+// API Endpoints
+// ---------------------------------------------------------
+
+// Link Instance to User
+app.post('/api/instances/link', async (req, res) => {
+    await db.read();
+    const { instanceName, userId } = req.body;
+
+    if (!instanceName || !userId) {
+        return res.status(400).json({ success: false, message: 'Missing instanceName or userId' });
+    }
+
+    if (!db.data.userInstances) {
+        db.data.userInstances = [];
+    }
+
+    // Check if already linked
+    const existing = db.data.userInstances.find(i => i.instanceName === instanceName);
+    if (!existing) {
+        db.data.userInstances.push({ instanceName, userId, createdAt: new Date().toISOString() });
+        await db.write();
+    } else if (existing.userId !== userId) {
+        // Optional: Decide if an instance can be engaged by multiple users. For now, strict ownership.
+        return res.status(403).json({ success: false, message: 'Instance already owned by another user' });
+    }
+
+    res.json({ success: true });
+});
+
+// Proxy: Fetch Instances (User Isolated)
+app.get('/api/instances', async (req, res) => {
+    const userId = getUserId(req);
+
+    // In strict mode, admin check would be here. For now, if no userId, return empty to be safe
+    if (!userId) {
+        return res.json([]);
+    }
+
+    try {
+        await db.read();
+        const userInstances = db.data.userInstances || [];
+        // Get names of instances owned by this user
+        const myInstanceNames = userInstances.filter(i => i.userId === userId).map(i => i.instanceName);
+
+        if (myInstanceNames.length === 0) {
+            return res.json([]);
+        }
+
+        // Fetch ALL from Evolution (Backend knows about all, but filters for User)
+        const response = await axios.get(`${EVOLUTION_URL}/instance/fetchInstances`, {
+            headers: { 'apikey': EVOLUTION_API_KEY }
+        });
+
+        const allInstances = response.data || [];
+
+        // Filter: Only show instances that belong to this user
+        const myInstances = allInstances.filter(inst => myInstanceNames.includes(inst.instanceName || inst.name));
+
+        res.json(myInstances);
+
+    } catch (error) {
+        console.error('Error fetching instances proxy:', error.message);
+        res.status(500).json([]);
+    }
+});
+
+// Get campaigns (User Specific)
 app.get('/api/campaigns', async (req, res) => {
     await db.read();
-    res.json(db.data.campaigns);
+    const userId = getUserId(req);
+
+    // If no user ID provided, return all (Backward Compatibility / Admin)
+    // In strict production, this should likely be restricted.
+    if (!userId) {
+        return res.json(db.data.campaigns);
+    }
+
+    // Filter campaigns by User ID
+    const userCampaigns = db.data.campaigns.filter(c => c.userId === userId);
+    res.json(userCampaigns);
 });
 
 // Create new campaign
 app.post('/api/campaigns', async (req, res) => {
     const { name, message, recipients, senderInstance, minDelay, maxDelay, scheduledAt, rotationCount, type } = req.body;
+    const userId = getUserId(req);
+
+    if (!userId) {
+        return res.status(401).json({ success: false, message: 'User ID is required' });
+    }
 
     const newCampaign = {
         id: Date.now().toString(),
+        userId: userId, // Bind to User
         name,
         message,
-        senderInstance,
+        senderInstance, // This is the instance name. User isolation for using ONLY their instances should be handled in Frontend selection or Backend validation
         rotationCount: parseInt(rotationCount) || 5,
         sentSinceRotation: 0,
         currentSender: null,
@@ -390,22 +478,71 @@ app.post('/api/campaigns', async (req, res) => {
     res.status(201).json(newCampaign);
 });
 
-// Settings Endpoints
+// Settings Endpoints (User Specific)
 app.get('/api/settings', async (req, res) => {
     await db.read();
-    res.json(db.data.settings || {});
+    const userId = getUserId(req);
+
+    if (!userId) {
+        // Fallback to global settings if no user specific (Old behavior)
+        return res.json(db.data.settings || {});
+    }
+
+    // Initialize userSettings array if not exists
+    if (!db.data.userSettings) {
+        db.data.userSettings = {};
+    }
+
+    // Get settings for specific user, or empty object
+    const userSettings = db.data.userSettings[userId] || {};
+
+    // Merge with global defaults if needed, or just return user settings
+    res.json(userSettings);
 });
 
 app.post('/api/settings', async (req, res) => {
+    await db.read();
+    const userId = getUserId(req);
     const newSettings = req.body;
-    db.data.settings = { ...db.data.settings, ...newSettings };
+
+    if (!userId) {
+        // Fallback to global settings (Old behavior)
+        db.data.settings = { ...db.data.settings, ...newSettings };
+        await db.write();
+        return res.json({ success: true, settings: db.data.settings });
+    }
+
+    if (!db.data.userSettings) {
+        db.data.userSettings = {};
+    }
+
+    // Update specific user settings
+    db.data.userSettings[userId] = {
+        ...(db.data.userSettings[userId] || {}),
+        ...newSettings
+    };
+
     await db.write();
-    res.json({ success: true, settings: db.data.settings });
+    res.json({ success: true, settings: db.data.userSettings[userId] });
 });
 
-// Delete campaign
+// Delete campaign (Secure)
 app.delete('/api/campaigns/:id', async (req, res) => {
+    await db.read();
     const { id } = req.params;
+    const userId = getUserId(req);
+
+    const campaign = db.data.campaigns.find(c => c.id === id);
+
+    if (!campaign) {
+        return res.status(404).json({ success: false, message: 'Campaign not found' });
+    }
+
+    // Check ownership
+    if (userId && campaign.userId && campaign.userId !== userId) {
+        return res.status(403).json({ success: false, message: 'Unauthorized' });
+    }
+
     db.data.campaigns = db.data.campaigns.filter(c => c.id !== id);
     await db.write();
     res.json({ success: true });

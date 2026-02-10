@@ -34,7 +34,7 @@ interface EvolutionSession {
 const EVOLUTION_URL = import.meta.env.VITE_EVOLUTION_URL;
 const EVOLUTION_API_KEY = import.meta.env.VITE_EVOLUTION_API_KEY;
 
-const Inbox: React.FC<InboxProps> = ({ language }) => {
+const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
   const isRtl = language === 'ar';
 
   // Multi-Session Management
@@ -83,9 +83,13 @@ const Inbox: React.FC<InboxProps> = ({ language }) => {
 
   // FETCH ALL SESSIONS LOGIC
   const refreshSessions = useCallback(async () => {
+    if (!userId) return;
     try {
-      const res = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
-        headers: { 'apikey': EVOLUTION_API_KEY }
+      const res = await fetch('/api/instances', {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': userId
+        }
       });
       const data = await res.json();
       const rawInstances = Array.isArray(data) ? data : [];
@@ -114,7 +118,7 @@ const Inbox: React.FC<InboxProps> = ({ language }) => {
     } finally {
       setIsSearchingSessions(false);
     }
-  }, [currentSession]);
+  }, [currentSession, userId]);
 
   // Initial Load & Polling for Sessions
   useEffect(() => {

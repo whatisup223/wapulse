@@ -1,17 +1,18 @@
 
 import React from 'react';
-import { 
-  LayoutDashboard, 
-  MessageSquare, 
-  Megaphone, 
-  Users, 
-  Link, 
-  BarChart3, 
-  Settings, 
-  ChevronLeft, 
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Megaphone,
+  Users,
+  Link,
+  BarChart3,
+  Settings,
+  ChevronLeft,
   ChevronRight,
   X,
-  Zap
+  Zap,
+  LogOut
 } from 'lucide-react';
 import { Page } from '../types';
 
@@ -23,16 +24,18 @@ interface SidebarProps {
   isMobileOpen: boolean;
   setIsMobileOpen: (open: boolean) => void;
   language: 'en' | 'ar';
+  onLogout?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ 
-  currentPage, 
-  setCurrentPage, 
-  isCollapsed, 
+const Sidebar: React.FC<SidebarProps> = ({
+  currentPage,
+  setCurrentPage,
+  isCollapsed,
   setIsCollapsed,
   isMobileOpen,
   setIsMobileOpen,
-  language
+  language,
+  onLogout
 }) => {
   const isRtl = language === 'ar';
 
@@ -52,7 +55,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm z-[60] lg:hidden transition-opacity" onClick={() => setIsMobileOpen(false)} />
       )}
 
-      <aside 
+      <aside
         className={`fixed inset-y-0 ${isRtl ? 'right-0' : 'left-0'} z-[70] lg:static transition-all duration-500 ease-in-out
         ${isMobileOpen ? 'translate-x-0' : (isRtl ? 'translate-x-full' : '-translate-x-full')} lg:translate-x-0
         ${isCollapsed ? 'lg:w-20' : 'lg:w-64'} w-72 h-screen`}
@@ -78,8 +81,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                 key={item.id}
                 onClick={() => setCurrentPage(item.id as Page)}
                 className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 group
-                  ${currentPage === item.id 
-                    ? 'bg-slate-950 text-white dark:bg-emerald-600 dark:text-white shadow-lg shadow-slate-200 dark:shadow-emerald-900/10' 
+                  ${currentPage === item.id
+                    ? 'bg-slate-950 text-white dark:bg-emerald-600 dark:text-white shadow-lg shadow-slate-200 dark:shadow-emerald-900/10'
                     : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900'}`}
               >
                 <item.icon className={`w-5 h-5 transition-transform duration-300 group-hover:scale-110`} />
@@ -88,7 +91,16 @@ const Sidebar: React.FC<SidebarProps> = ({
             ))}
           </nav>
 
-          <div className="p-4 mt-auto border-t border-slate-50 dark:border-white/5">
+          <div className="p-4 mt-auto border-t border-slate-50 dark:border-white/5 space-y-2">
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10`}
+              >
+                <LogOut className="w-5 h-5" />
+                {(!isCollapsed || isMobileOpen) && <span className="font-bold text-sm tracking-tight">{isRtl ? 'تسجيل الخروج' : 'Logout'}</span>}
+              </button>
+            )}
             <button
               onClick={() => setIsCollapsed(!isCollapsed)}
               className="w-full flex items-center justify-center p-3 rounded-xl text-slate-300 hover:text-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all hidden lg:flex"

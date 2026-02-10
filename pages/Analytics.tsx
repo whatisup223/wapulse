@@ -36,9 +36,19 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
     const fetchAnalytics = async () => {
       setLoading(true);
       try {
-        // 1. Get Instances
-        const instancesRes = await fetch(`${EVOLUTION_URL}/instance/fetchInstances`, {
-          headers: { 'apikey': EVOLUTION_API_KEY }
+        // 1. Get Instances (User Isolated)
+        const savedUser = localStorage.getItem('wapulse_user');
+        const user = savedUser ? JSON.parse(savedUser) : null;
+        if (!user?.id) {
+          setLoading(false);
+          return;
+        }
+
+        const instancesRes = await fetch('/api/instances', {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-User-Id': user.id
+          }
         });
         const instancesData = await instancesRes.json();
         const connectedInstances = Array.isArray(instancesData)
@@ -130,7 +140,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ language }) => {
           }));
         }
 
-        const campRes = await fetch('/api/campaigns');
+        const campRes = await fetch('/api/campaigns', {
+          headers: { 'X-User-Id': user.id }
+        });
         const campaigns = await campRes.json();
         let totalCampSent = 0;
         let totalScheduled = 0;

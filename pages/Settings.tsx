@@ -68,7 +68,9 @@ const Settings: React.FC<SettingsProps> = ({ language, user, onProfileUpdate, is
   React.useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const res = await fetch('/api/settings');
+        const res = await fetch('/api/settings', {
+          headers: user?.id ? { 'X-User-Id': user.id } : {}
+        });
         const data = await res.json();
         if (Object.keys(data).length > 0) {
           setSettings(prev => ({
@@ -83,8 +85,8 @@ const Settings: React.FC<SettingsProps> = ({ language, user, onProfileUpdate, is
         console.error('Failed to fetch settings', err);
       }
     };
-    fetchSettings();
-  }, []);
+    if (user?.id) fetchSettings();
+  }, [user]);
 
   const handleToggle = (key: keyof typeof settings) => {
     setSettings(prev => ({ ...prev, [key]: !prev[key] }));
@@ -96,7 +98,10 @@ const Settings: React.FC<SettingsProps> = ({ language, user, onProfileUpdate, is
       // 1. Save general settings
       await fetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.id ? { 'X-User-Id': user.id } : {})
+        },
         body: JSON.stringify(settings)
       });
 
@@ -190,7 +195,10 @@ const Settings: React.FC<SettingsProps> = ({ language, user, onProfileUpdate, is
     try {
       await fetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.id ? { 'X-User-Id': user.id } : {})
+        },
         body: JSON.stringify({ ...settings, twoFactor: newValue })
       });
 
@@ -221,7 +229,10 @@ const Settings: React.FC<SettingsProps> = ({ language, user, onProfileUpdate, is
     try {
       await fetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.id ? { 'X-User-Id': user.id } : {})
+        },
         body: JSON.stringify({ ...settings, emailNotifications: newValue })
       });
 
@@ -261,7 +272,10 @@ const Settings: React.FC<SettingsProps> = ({ language, user, onProfileUpdate, is
 
           await fetch('/api/settings', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(user?.id ? { 'X-User-Id': user.id } : {})
+            },
             body: JSON.stringify({ ...settings, desktopNotifications: newValue })
           });
         } else {
@@ -279,7 +293,10 @@ const Settings: React.FC<SettingsProps> = ({ language, user, onProfileUpdate, is
       try {
         await fetch('/api/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(user?.id ? { 'X-User-Id': user.id } : {})
+          },
           body: JSON.stringify({ ...settings, desktopNotifications: newValue })
         });
 
