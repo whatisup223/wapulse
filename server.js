@@ -171,8 +171,53 @@ const fetchAndLinkContacts = async (instanceName) => {
                 }
             }
         }
+
+        // --- DEEP DISCOVERY START ---
+        // Fetch all chats to find LIDs that need resolution
+        console.log(`🔍 Deep Discovery: Scanning chats for unresolved LIDs in ${instanceName}...`);
+        const chatRes = await axios.post(`${EVOLUTION_URL}/chat/findChats/${encodeURIComponent(instanceName)}`, {}, {
+            headers: { 'apikey': EVOLUTION_API_KEY }
+        });
+        const rawChats = chatRes.data?.records || chatRes.data || [];
+
+        for (const c of rawChats) {
+            const rawId = c.remoteJid || c.id || '';
+            const fullJid = normalizeJid(rawId);
+            if (fullJid && fullJid.includes('@lid')) {
+                // Check if already linked
+                const linkedIds = getLinkedIds(fullJid, instanceName);
+                if (!linkedIds.find(id => id.includes('@s.whatsapp.net'))) {
+                    console.log(`🕵️ Attempting Deep Resolve for LID: ${fullJid}`);
+                    // Fetch recent messages to find real JID or Name
+                    try {
+                        const msgRes = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${encodeURIComponent(instanceName)}`, {
+                            where: { remoteJid: fullJid },
+                            limit: 10
+                        }, { headers: { 'apikey': EVOLUTION_API_KEY } });
+                        const msgs = msgRes.data?.records || msgRes.data || [];
+
+                        for (const m of msgs) {
+                            // 1. Look for remoteJidAlt
+                            const alt = normalizeJid(m.key?.remoteJidAlt || m.remoteJidAlt);
+                            if (alt && alt.includes('@s.whatsapp.net')) {
+                                updateJidLink(instanceName, alt, fullJid);
+                                linkCount++;
+                                break;
+                            }
+                            // 2. Look for real pushName in incoming messages
+                            if (!m.key?.fromMe && m.pushName && m.pushName !== 'Você' && !/^\d+$/.test(m.pushName)) {
+                                db.data.contacts.push({ id: fullJid, instanceName, name: m.pushName });
+                                break;
+                            }
+                        }
+                    } catch (e) { /* ignore single chat sync error */ }
+                }
+            }
+        }
+        // --- DEEP DISCOVERY END ---
+
         if (linkCount > 0) {
-            console.log(`🔗 Created ${linkCount} new JID/LID links from contacts.`);
+            console.log(`🔗 Created ${linkCount} new JID/LID links from contacts and deep discovery.`);
             await db.write();
         }
     } catch (e) {
@@ -695,13 +740,17 @@ const transformChat = (c, instanceName) => {
             if (digits.length >= 7) finalName = `+${digits}`;
             else finalName = idPart;
         } else if (domain === 'lid') {
-            // If it's an LID and we have a name in pushName, use it
-            if (pushName && !/^\d+$/.test(pushName)) {
+            // Check if we have a linked JID name OR a pushName
+            const linkedIds = getLinkedIds(fullJid, instanceName);
+            const realJid = linkedIds.find(id => id.includes('@s.whatsapp.net'));
+
+            if (pushName && pushName !== 'Você' && !/^\d+$/.test(pushName)) {
                 finalName = pushName;
+            } else if (realJid) {
+                finalName = `+${realJid.split('@')[0]}`;
             } else {
-                // Formatting fallback: If it looks like a phone number, add + for UI consistency
-                if (/^\d{10,20}$/.test(idPart)) finalName = `+${idPart}`;
-                else finalName = idPart;
+                // Formatting fallback: DO NOT add + to raw LIDs to avoid confusion with phone numbers
+                finalName = `Contact (${idPart.substring(0, 5)}...)`;
             }
         } else if (domain === 'newsletter') {
             finalName = `Channel: ${idPart.substring(0, 8)}...`;
