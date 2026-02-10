@@ -128,7 +128,8 @@ const updateJidLink = async (instanceName, jid, lid) => {
 const fetchAndLinkContacts = async (instanceName) => {
     try {
         console.log(`📇 Fetching contacts to build JID/LID map for ${instanceName}...`);
-        const response = await axios.post(`${EVOLUTION_URL}/contact/fetchContacts/${encodeURIComponent(instanceName)}`, {}, {
+        // Use the discovered endpoint that actually works on this version
+        const response = await axios.post(`${EVOLUTION_URL}/chat/findContacts/${encodeURIComponent(instanceName)}`, {}, {
             headers: { 'apikey': EVOLUTION_API_KEY }
         });
 
@@ -136,27 +137,37 @@ const fetchAndLinkContacts = async (instanceName) => {
         let linkCount = 0;
 
         for (const c of contacts) {
-            const jid = normalizeJid(c.id || c.jid || c.remoteJid);
+            const jid = normalizeJid(c.remoteJid || c.jid || c.id);
             const lid = normalizeJid(c.lid);
 
-            if (jid && lid && jid.includes('@s.whatsapp.net') && lid.includes('@lid')) {
-                const exists = db.data.jidLinks.find(l => l.instanceName === instanceName && l.jid === jid && l.lid === lid);
+            // Even if lid is missing in record, sometimes remoteJid IS the LID
+            // and we need to check if there's an associated JID in the record metadata
+            // Some versions of evolution include 'jid' as the phone number in LID records
+            const finalJid = jid.includes('@s.whatsapp.net') ? jid : (normalizeJid(c.jid).includes('@s.whatsapp.net') ? normalizeJid(c.jid) : '');
+            const finalLid = jid.includes('@lid') ? jid : (lid.includes('@lid') ? lid : '');
+
+            if (finalJid && finalLid && finalJid !== finalLid) {
+                const exists = db.data.jidLinks.find(l => l.instanceName === instanceName && l.jid === finalJid && l.lid === finalLid);
                 if (!exists) {
-                    db.data.jidLinks.push({ instanceName, jid, lid, updatedAt: new Date().toISOString() });
+                    db.data.jidLinks.push({ instanceName, jid: finalJid, lid: finalLid, updatedAt: new Date().toISOString() });
                     linkCount++;
                 }
+            }
 
-                // Also cache the contact name while we are at it
-                const existingC = db.data.contacts.find(x => x.id === jid && x.instanceName === instanceName);
+            // Cache Name
+            const idToCache = finalJid || finalLid || jid;
+            if (idToCache) {
                 const name = c.name || c.pushName || c.pushname || c.verifiedName;
                 if (name) {
-                    if (existingC) existingC.name = name;
-                    else db.data.contacts.push({ id: jid, instanceName, name, profilePicUrl: c.profilePictureUrl || null });
+                    const existing = db.data.contacts.find(x => x.id === idToCache && x.instanceName === instanceName);
+                    if (existing) existing.name = name;
+                    else db.data.contacts.push({ id: idToCache, instanceName, name, profilePicUrl: c.profilePictureUrl || c.profilePicUrl || null });
 
-                    // Duplicate name to LID for UI lookup
-                    const existingLidC = db.data.contacts.find(x => x.id === lid && x.instanceName === instanceName);
-                    if (existingLidC) existingLidC.name = name;
-                    else db.data.contacts.push({ id: lid, instanceName, name, profilePicUrl: c.profilePictureUrl || null });
+                    if (finalLid && idToCache !== finalLid) {
+                        const existingLid = db.data.contacts.find(x => x.id === finalLid && x.instanceName === instanceName);
+                        if (existingLid) existingLid.name = name;
+                        else db.data.contacts.push({ id: finalLid, instanceName, name, profilePicUrl: c.profilePictureUrl || c.profilePicUrl || null });
+                    }
                 }
             }
         }
@@ -684,9 +695,14 @@ const transformChat = (c, instanceName) => {
             if (digits.length >= 7) finalName = `+${digits}`;
             else finalName = idPart;
         } else if (domain === 'lid') {
-            // If it's an LID and we have a name in pushName, use it, otherwise don't format as phone
-            if (pushName && !/^\d+$/.test(pushName)) finalName = pushName;
-            else finalName = idPart;
+            // If it's an LID and we have a name in pushName, use it
+            if (pushName && !/^\d+$/.test(pushName)) {
+                finalName = pushName;
+            } else {
+                // Formatting fallback: If it looks like a phone number, add + for UI consistency
+                if (/^\d{10,20}$/.test(idPart)) finalName = `+${idPart}`;
+                else finalName = idPart;
+            }
         } else if (domain === 'newsletter') {
             finalName = `Channel: ${idPart.substring(0, 8)}...`;
         } else {

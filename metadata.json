@@ -1,7 +1,0 @@
-{
-  "name": "WAPulse SaaS Dashboard",
-  "description": "A modern, high-performance WhatsApp management platform for businesses to manage conversations, campaigns, and analytics.",
-  "requestFramePermissions": [
-    "camera"
-  ]
-}
