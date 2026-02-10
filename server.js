@@ -642,13 +642,20 @@ const transformChat = (c, instanceName) => {
 app.get('/api/chats/:instanceName', async (req, res) => {
     const { instanceName } = req.params;
     const forceSync = req.query.force === 'true';
+    const cleanCache = req.query.clean === 'true';
 
     await db.read();
     db.data = db.data || {};
     if (!db.data.chats) db.data.chats = [];
+    if (!db.data.messages) db.data.messages = [];
 
     // 1. Fetch from Evolution if needed
     if (db.data.chats.filter(c => c.instanceName === instanceName).length === 0 || forceSync) {
+        if (cleanCache || forceSync) {
+            console.log(`🧹 Cleaning local cache for ${instanceName}`);
+            db.data.chats = db.data.chats.filter(c => c.instanceName !== instanceName);
+            db.data.messages = db.data.messages.filter(m => m.instanceName !== instanceName);
+        }
         try {
             const encodedInstanceName = encodeURIComponent(instanceName);
             const response = await axios.post(`${EVOLUTION_URL}/chat/findChats/${encodedInstanceName}`, {}, {

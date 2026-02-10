@@ -182,7 +182,7 @@ const Inbox: React.FC<InboxProps> = ({ language, userId }) => {
     try {
       // Use local API: Handles caching and sync automatically
       const encodedSessionName = encodeURIComponent(sessionName);
-      const url = `/api/chats/${encodedSessionName}${isManualSync ? '?force=true' : ''}`;
+      const url = `/api/chats/${encodedSessionName}${isManualSync ? '?force=true&clean=true' : ''}`;
 
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch chats');
