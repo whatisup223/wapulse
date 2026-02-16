@@ -198,7 +198,7 @@ const Campaigns: React.FC<CampaignsProps> = ({ language }) => {
             <p className="text-slate-500 dark:text-slate-400 font-medium">{isRtl ? 'إدارة وجدولة حملاتك الإعلانية ومتابعة النتائج.' : 'Manage, schedule and track your marketing campaigns.'}</p>
           </div>
           <button
-            onClick={() => window.location.hash = '#create-campaign'}
+            onClick={() => window.location.href = '/campaigns/create'}
             className="group relative overflow-hidden bg-gradient-to-r from-emerald-600 to-teal-500 text-white px-8 py-3.5 rounded-2xl font-bold shadow-xl shadow-emerald-600/20 hover:shadow-emerald-600/30 hover:-translate-y-1 transition-all flex items-center gap-3"
           >
             <span className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></span>

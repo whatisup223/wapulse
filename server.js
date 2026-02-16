@@ -19,7 +19,9 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+// Increase payload limit to handle large contact syncs
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // Database Initialization
 const defaultData = {
@@ -121,9 +123,7 @@ const updateJidLink = async (instanceName, jid, lid) => {
 
     const exists = db.data.jidLinks.find(l => l.instanceName === instanceName && l.jid === jid && l.lid === lid);
     if (!exists) {
-        console.log(`🔗 Linking JID: ${jid} with LID: ${lid}`);
         db.data.jidLinks.push({ instanceName, jid, lid, updatedAt: new Date().toISOString() });
-        await db.write();
     }
 };
 
@@ -155,60 +155,65 @@ const fetchAndLinkContacts = async (instanceName) => {
         let linkCount = 0;
         let updateCount = 0;
 
+        // Optimization: Create Map for O(1) lookup
+        const contactMap = new Map();
+        if (db.data.contacts) {
+            db.data.contacts.forEach(c => {
+                if (c.instanceName === instanceName) contactMap.set(c.id, c);
+            });
+        }
+
+        // Batch Processing
         for (const c of contacts) {
             const rawId = c.id || c.remoteJid || c.jid;
             const jid = normalizeJid(rawId);
 
             // Extract potential LID and Phone JID
-            // Evolution sometimes returns 'id' as LID and 'remoteJid' as phone JID or vice versa depending on version
             let potentialLid = null;
             let potentialJid = null;
 
             if (jid.includes('@lid')) potentialLid = jid;
             else if (jid.includes('@s.whatsapp.net')) potentialJid = jid;
 
-            // Check specific fields if available
             if (c.lid) potentialLid = normalizeJid(c.lid);
             if (c.user_jid || c.userJid) potentialJid = normalizeJid(c.user_jid || c.userJid);
 
-            // Link Mapping
+            // Link Mapping (In Memory)
             if (potentialLid && potentialJid) {
                 updateJidLink(instanceName, potentialJid, potentialLid);
                 linkCount++;
             }
 
-            // Determine Primary ID (Phone Number based JID is preferred for storage)
+            // Determine Primary ID
             const primaryId = potentialJid || potentialLid || jid;
-
             if (!primaryId) continue;
 
             // Name Resolution
             const name = c.name || c.pushName || c.pushname || c.verifiedName || c.notify;
             const pic = c.profilePictureUrl || c.profilePicUrl || null;
+            const isNameValid = name && !name.includes('@') && !/^\d+$/.test(name);
 
-            // Only update if we have a valid name or if contact doesn't exist
             if (primaryId) {
-                const existing = db.data.contacts.find(x => x.id === primaryId && x.instanceName === instanceName);
-
-                // Don't overwrite a good name with a phone number or ID
-                const isNameValid = name && !name.includes('@') && !/^\d+$/.test(name);
+                const existing = contactMap.get(primaryId);
 
                 if (existing) {
                     if (isNameValid) existing.name = name;
                     if (pic) existing.profilePicUrl = pic;
                 } else {
-                    db.data.contacts.push({
+                    const newContact = {
                         id: primaryId,
                         instanceName,
                         name: isNameValid ? name : (primaryId.includes('@s.whatsapp.net') ? '+' + primaryId.split('@')[0] : primaryId),
                         profilePicUrl: pic
-                    });
+                    };
+                    db.data.contacts.push(newContact);
+                    contactMap.set(primaryId, newContact); // Add to map for subsequent dup checks
                     updateCount++;
                 }
             }
         }
 
-        console.log(`✅ Sync Complete: ${updateCount} contacts added/updated, ${linkCount} JID/LID links created.`);
+        console.log(`✅ Sync Complete: ${updateCount} new contacts, JID/LID links updated.`);
         await db.write();
 
     } catch (e) {
