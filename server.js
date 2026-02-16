@@ -531,12 +531,12 @@ app.post('/api/webhooks/evolution', async (req, res) => {
 
 let isProcessing = false;
 
+// In processQueue
 async function processQueue() {
     if (isProcessing) return;
     isProcessing = true;
 
     try {
-        await db.read();
         const campaigns = db.data.campaigns || [];
         const now = new Date();
 
@@ -829,7 +829,6 @@ app.get('/api/chats/:instanceName', async (req, res) => {
     const forceSync = req.query.force === 'true';
     const cleanCache = req.query.clean === 'true';
 
-    await db.read();
     db.data = db.data || {};
     if (!db.data.chats) db.data.chats = [];
     if (!db.data.messages) db.data.messages = [];
@@ -932,8 +931,6 @@ app.get('/api/chats/:instanceName', async (req, res) => {
 */
 app.get('/api/messages/:instanceName/:chatId', async (req, res) => {
     const { instanceName, chatId } = req.params;
-    await db.read();
-
     const targetId = normalizeJid(decodeURIComponent(chatId));
     if (!targetId) return res.json([]);
 
@@ -1080,7 +1077,6 @@ app.get('/api/instances', async (req, res) => {
 
 // Get campaigns (User Specific)
 app.get('/api/campaigns', async (req, res) => {
-    await db.read();
     const userId = getUserId(req);
 
     // If no user ID provided, return all (Backward Compatibility / Admin)
