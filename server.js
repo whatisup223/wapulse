@@ -782,6 +782,25 @@ const transformChat = (c, instanceName) => {
     };
 };
 
+/* GET /api/debug/reset/:instanceName
+   - Clears all cached data for this instance
+   - Force fresh start
+*/
+app.get('/api/debug/reset/:instanceName', async (req, res) => {
+    const { instanceName } = req.params;
+    await db.read();
+
+    // Filter OUT everything from this instance
+    db.data.chats = db.data.chats.filter(c => c.instanceName !== instanceName);
+    db.data.messages = db.data.messages.filter(m => m.instanceName !== instanceName);
+    db.data.contacts = db.data.contacts.filter(c => c.instanceName !== instanceName);
+    db.data.jidLinks = db.data.jidLinks.filter(l => l.instanceName !== instanceName);
+
+    await db.write();
+    console.log(`🧹 RESET COMPLETE for ${instanceName}`);
+    res.json({ success: true, message: `Cache cleared for ${instanceName}` });
+});
+
 /* GET /api/chats/:instanceName
    - Returns cached chats
    - If cache empty, fetches from Evolution (Sync)
@@ -1004,11 +1023,7 @@ app.get('/api/instances', async (req, res) => {
         // Get names of instances owned by this user
         const myInstanceNames = userInstances.filter(i => i.userId === userId).map(i => i.instanceName);
 
-        if (myInstanceNames.length === 0) {
-            return res.json([]);
-        }
-
-        // Fetch ALL from Evolution (Backend knows about all, but filters for User)
+        // Fetch ALL from Evolution
         const response = await axios.get(`${EVOLUTION_URL}/instance/fetchInstances`, {
             headers: { 'apikey': EVOLUTION_API_KEY }
         });
@@ -1016,7 +1031,26 @@ app.get('/api/instances', async (req, res) => {
         const allInstances = response.data || [];
 
         // Filter: Only show instances that belong to this user
-        const myInstances = allInstances.filter(inst => myInstanceNames.includes(inst.instanceName || inst.name));
+        let myInstances = allInstances.filter(inst => myInstanceNames.includes(inst.instanceName || inst.name));
+
+        // FALLBACK FOR DEBUGGING: If user has NO instances linked locally, 
+        // but there are active instances on the server, show them (Temporary fix to see connections)
+        if (myInstances.length === 0 && allInstances.length > 0) {
+            console.log(`⚠️ User ${userId} has no linked instances, showing all available server instances for debugging.`);
+            // Auto-link found open instances content to this user to fix the "No numbers connected" issue
+            const openInstances = allInstances.filter(i => i.connectionStatus === 'open' || i.state === 'open');
+            if (openInstances.length > 0) {
+                for (const inst of openInstances) {
+                    const iName = inst.instanceName || inst.name;
+                    // Link it!
+                    if (!userInstances.find(ui => ui.instanceName === iName)) {
+                        db.data.userInstances.push({ instanceName: iName, userId, createdAt: new Date().toISOString() });
+                    }
+                }
+                await db.write();
+                myInstances = openInstances;
+            }
+        }
 
         res.json(myInstances);
 
