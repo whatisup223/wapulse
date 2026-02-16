@@ -721,21 +721,34 @@ const transformChat = (c, instanceName) => {
     let pushName = (c.pushName || c.pushname || c.verifiedName);
     if (!pushName && !isFromMe) pushName = c.lastMessage?.pushName;
 
-    let finalName = c.name || pushName;
 
-    // Check contacts cache if name missing (Enhanced with Linked IDs)
-    if (!finalName || finalName === idPart || /^[a-zA-Z0-9_-]{15,}$/.test(finalName)) {
+
+    // ---------------------------------------------------------
+    // Name Resolution Priority:
+    // 1. Contact Name (Local DB)
+    // 2. Push Name (from Metadata)
+    // 3. Formatted Phone Number (if JID is phone)
+    // 4. Formatted Phone Number (if Linked JID found)
+    // 5. User (LID...)
+    // ---------------------------------------------------------
+
+    let resolvedName = c.name || c.verifyName || c.pushName || c.pushname || c.verifiedName || c.notify;
+
+    // If we have a name, but it looks like an ID or is empty, treat as null
+    if (resolvedName && (resolvedName.includes('@') || /^[a-zA-Z0-9_-]{15,}$/.test(resolvedName))) {
+        resolvedName = null;
+    }
+
+    // A. Check Local Contacts (including Linked IDs)
+    if (!resolvedName) {
         let searchIds = [fullJid];
-
-        // If LID, look for linked phone JID
         const linked = getLinkedIds(fullJid, instanceName);
         if (linked && linked.length > 0) searchIds = [...searchIds, ...linked];
 
         for (const pid of searchIds) {
             const contact = db.data.contacts.find(x => x.id === pid && x.instanceName === instanceName);
             if (contact && contact.name && !contact.name.includes('@') && !/^\d+$/.test(contact.name)) {
-                finalName = contact.name;
-                // Update the profile pic while we are at it
+                resolvedName = contact.name;
                 if (!c.profilePictureUrl && !c.profilePicUrl && contact.profilePicUrl) {
                     c.profilePicUrl = contact.profilePicUrl;
                 }
@@ -744,29 +757,29 @@ const transformChat = (c, instanceName) => {
         }
     }
 
-    // Advanced Formatting for IDs acting as names
-    if (!finalName || finalName === idPart || finalName.startsWith('lid_') || /^[a-zA-Z0-9_-]{15,}$/.test(finalName)) {
+    // B. Fallback to Formatted ID
+    if (!resolvedName) {
         if (domain === 's.whatsapp.net') {
-            // Always format as phone number for regular WhatsApp IDs
             const digits = idPart.replace(/\D/g, '');
-            if (digits.length >= 7) finalName = `+${digits}`;
-            else finalName = idPart;
+            resolvedName = `+${digits}`;
         } else if (domain === 'lid') {
-            // Check if we have a linked JID name OR a pushName
+            // Check linked JID again for phone number
             const linkedIds = getLinkedIds(fullJid, instanceName);
             const realJid = linkedIds.find(id => id.includes('@s.whatsapp.net'));
 
             if (realJid) {
-                finalName = `+${realJid.split('@')[0]}`;
+                resolvedName = `+${realJid.split('@')[0]}`;
             } else {
-                finalName = `User (${idPart.substring(0, 4)}..${idPart.substring(idPart.length - 4)})`;
+                resolvedName = `User (${idPart.substring(0, 4)}..${idPart.substring(idPart.length - 4)})`;
             }
         } else if (domain === 'newsletter') {
-            finalName = `Channel: ${idPart.substring(0, 8)}...`;
+            resolvedName = `Channel: ${idPart.substring(0, 8)}...`;
         } else {
-            finalName = idPart;
+            resolvedName = idPart;
         }
     }
+
+    let finalName = resolvedName;
 
     // Unified ID Logic: Always prefer Phone JID over LID for the Chat ID
     let finalId = fullJid;
