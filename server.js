@@ -130,99 +130,87 @@ const updateJidLink = async (instanceName, jid, lid) => {
 // Helper: Fetch Contacts and Link JID/LID
 const fetchAndLinkContacts = async (instanceName) => {
     try {
-        console.log(`📇 Fetching contacts to build JID/LID map for ${instanceName}...`);
-        // Use the discovered endpoint that actually works on this version
+        console.log(`🔄 Starting Contact Sync for ${instanceName}...`);
+
+        // 1. Check Connection Status First
+        try {
+            const statusRes = await axios.get(`${EVOLUTION_URL}/instance/connectionState/${encodeURIComponent(instanceName)}`, {
+                headers: { 'apikey': EVOLUTION_API_KEY }
+            });
+            const state = statusRes.data?.instance?.state || statusRes.data?.state;
+            if (state !== 'open') {
+                console.log(`⚠️ Instance ${instanceName} is not open (State: ${state}). Skipping sync.`);
+                return;
+            }
+        } catch (e) {
+            console.log(`⚠️ Could not verify connection state for ${instanceName}, proceeding anyway...`);
+        }
+
+        console.log(`📇 Fetching contacts from Evolution for ${instanceName}...`);
         const response = await axios.post(`${EVOLUTION_URL}/chat/findContacts/${encodeURIComponent(instanceName)}`, {}, {
             headers: { 'apikey': EVOLUTION_API_KEY }
         });
 
         const contacts = response.data || [];
         let linkCount = 0;
+        let updateCount = 0;
 
         for (const c of contacts) {
-            const jid = normalizeJid(c.remoteJid || c.jid || c.id);
-            const lid = normalizeJid(c.lid);
+            const rawId = c.id || c.remoteJid || c.jid;
+            const jid = normalizeJid(rawId);
 
-            // Even if lid is missing in record, sometimes remoteJid IS the LID
-            // and we need to check if there's an associated JID in the record metadata
-            // Some versions of evolution include 'jid' as the phone number in LID records
-            const finalJid = jid.includes('@s.whatsapp.net') ? jid : (normalizeJid(c.jid).includes('@s.whatsapp.net') ? normalizeJid(c.jid) : '');
-            const finalLid = jid.includes('@lid') ? jid : (lid.includes('@lid') ? lid : '');
+            // Extract potential LID and Phone JID
+            // Evolution sometimes returns 'id' as LID and 'remoteJid' as phone JID or vice versa depending on version
+            let potentialLid = null;
+            let potentialJid = null;
 
-            if (finalJid && finalLid && finalJid !== finalLid) {
-                const exists = db.data.jidLinks.find(l => l.instanceName === instanceName && l.jid === finalJid && l.lid === finalLid);
-                if (!exists) {
-                    db.data.jidLinks.push({ instanceName, jid: finalJid, lid: finalLid, updatedAt: new Date().toISOString() });
-                    linkCount++;
-                }
+            if (jid.includes('@lid')) potentialLid = jid;
+            else if (jid.includes('@s.whatsapp.net')) potentialJid = jid;
+
+            // Check specific fields if available
+            if (c.lid) potentialLid = normalizeJid(c.lid);
+            if (c.user_jid || c.userJid) potentialJid = normalizeJid(c.user_jid || c.userJid);
+
+            // Link Mapping
+            if (potentialLid && potentialJid) {
+                updateJidLink(instanceName, potentialJid, potentialLid);
+                linkCount++;
             }
 
-            // Cache Name
-            const idToCache = finalJid || finalLid || jid;
-            if (idToCache) {
-                const name = c.name || c.pushName || c.pushname || c.verifiedName;
-                if (name) {
-                    const existing = db.data.contacts.find(x => x.id === idToCache && x.instanceName === instanceName);
-                    if (existing) existing.name = name;
-                    else db.data.contacts.push({ id: idToCache, instanceName, name, profilePicUrl: c.profilePictureUrl || c.profilePicUrl || null });
+            // Determine Primary ID (Phone Number based JID is preferred for storage)
+            const primaryId = potentialJid || potentialLid || jid;
 
-                    if (finalLid && idToCache !== finalLid) {
-                        const existingLid = db.data.contacts.find(x => x.id === finalLid && x.instanceName === instanceName);
-                        if (existingLid) existingLid.name = name;
-                        else db.data.contacts.push({ id: finalLid, instanceName, name, profilePicUrl: c.profilePictureUrl || c.profilePicUrl || null });
-                    }
-                }
-            }
-        }
+            if (!primaryId) continue;
 
-        // --- DEEP DISCOVERY START ---
-        // Fetch all chats to find LIDs that need resolution
-        console.log(`🔍 Deep Discovery: Scanning chats for unresolved LIDs in ${instanceName}...`);
-        const chatRes = await axios.post(`${EVOLUTION_URL}/chat/findChats/${encodeURIComponent(instanceName)}`, {}, {
-            headers: { 'apikey': EVOLUTION_API_KEY }
-        });
-        const rawChats = chatRes.data?.records || chatRes.data || [];
+            // Name Resolution
+            const name = c.name || c.pushName || c.pushname || c.verifiedName || c.notify;
+            const pic = c.profilePictureUrl || c.profilePicUrl || null;
 
-        for (const c of rawChats) {
-            const rawId = c.remoteJid || c.id || '';
-            const fullJid = normalizeJid(rawId);
-            if (fullJid && fullJid.includes('@lid')) {
-                // Check if already linked
-                const linkedIds = getLinkedIds(fullJid, instanceName);
-                if (!linkedIds.find(id => id.includes('@s.whatsapp.net'))) {
-                    console.log(`🕵️ Attempting Deep Resolve for LID: ${fullJid}`);
-                    // Fetch recent messages to find real JID or Name
-                    try {
-                        const msgRes = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${encodeURIComponent(instanceName)}`, {
-                            where: { remoteJid: fullJid },
-                            limit: 10
-                        }, { headers: { 'apikey': EVOLUTION_API_KEY } });
-                        const msgs = msgRes.data?.records || msgRes.data || [];
+            // Only update if we have a valid name or if contact doesn't exist
+            if (primaryId) {
+                const existing = db.data.contacts.find(x => x.id === primaryId && x.instanceName === instanceName);
 
-                        for (const m of msgs) {
-                            // 1. Look for remoteJidAlt
-                            const alt = normalizeJid(m.key?.remoteJidAlt || m.remoteJidAlt);
-                            if (alt && alt.includes('@s.whatsapp.net')) {
-                                updateJidLink(instanceName, alt, fullJid);
-                                linkCount++;
-                                break;
-                            }
-                            // 2. Look for real pushName in incoming messages
-                            if (!m.key?.fromMe && m.pushName && m.pushName !== 'Você' && !/^\d+$/.test(m.pushName)) {
-                                db.data.contacts.push({ id: fullJid, instanceName, name: m.pushName });
-                                break;
-                            }
-                        }
-                    } catch (e) { /* ignore single chat sync error */ }
+                // Don't overwrite a good name with a phone number or ID
+                const isNameValid = name && !name.includes('@') && !/^\d+$/.test(name);
+
+                if (existing) {
+                    if (isNameValid) existing.name = name;
+                    if (pic) existing.profilePicUrl = pic;
+                } else {
+                    db.data.contacts.push({
+                        id: primaryId,
+                        instanceName,
+                        name: isNameValid ? name : (primaryId.includes('@s.whatsapp.net') ? '+' + primaryId.split('@')[0] : primaryId),
+                        profilePicUrl: pic
+                    });
+                    updateCount++;
                 }
             }
         }
-        // --- DEEP DISCOVERY END ---
 
-        if (linkCount > 0) {
-            console.log(`🔗 Created ${linkCount} new JID/LID links from contacts and deep discovery.`);
-            await db.write();
-        }
+        console.log(`✅ Sync Complete: ${updateCount} contacts added/updated, ${linkCount} JID/LID links created.`);
+        await db.write();
+
     } catch (e) {
         console.error('❌ Contact Sync Error:', e.message);
     }
@@ -730,10 +718,25 @@ const transformChat = (c, instanceName) => {
 
     let finalName = c.name || pushName;
 
-    // Check contacts cache if name missing
-    if (!finalName) {
-        const contact = db.data.contacts.find(x => x.id === fullJid && x.instanceName === instanceName);
-        if (contact) finalName = contact.name;
+    // Check contacts cache if name missing (Enhanced with Linked IDs)
+    if (!finalName || finalName === idPart || /^[a-zA-Z0-9_-]{15,}$/.test(finalName)) {
+        let searchIds = [fullJid];
+
+        // If LID, look for linked phone JID
+        const linked = getLinkedIds(fullJid, instanceName);
+        if (linked && linked.length > 0) searchIds = [...searchIds, ...linked];
+
+        for (const pid of searchIds) {
+            const contact = db.data.contacts.find(x => x.id === pid && x.instanceName === instanceName);
+            if (contact && contact.name && !contact.name.includes('@') && !/^\d+$/.test(contact.name)) {
+                finalName = contact.name;
+                // Update the profile pic while we are at it
+                if (!c.profilePictureUrl && !c.profilePicUrl && contact.profilePicUrl) {
+                    c.profilePicUrl = contact.profilePicUrl;
+                }
+                break;
+            }
+        }
     }
 
     // Advanced Formatting for IDs acting as names
@@ -748,18 +751,10 @@ const transformChat = (c, instanceName) => {
             const linkedIds = getLinkedIds(fullJid, instanceName);
             const realJid = linkedIds.find(id => id.includes('@s.whatsapp.net'));
 
-            if (pushName && pushName !== 'Você' && !/^\d+$/.test(pushName)) {
-                finalName = pushName;
-            } else if (realJid) {
+            if (realJid) {
                 finalName = `+${realJid.split('@')[0]}`;
             } else {
-                // Last resort for LIDs only: Use last message preview as "name" for context
-                const lastMsgPreview = c.lastMessage?.message?.conversation || c.lastMessage?.body || '';
-                if (lastMsgPreview && lastMsgPreview.length > 0) {
-                    finalName = lastMsgPreview.substring(0, 25) + (lastMsgPreview.length > 25 ? '...' : '');
-                } else {
-                    finalName = `جهة اتصال (${idPart.substring(0, 5)}...)`;
-                }
+                finalName = `User (${idPart.substring(0, 4)}..${idPart.substring(idPart.length - 4)})`;
             }
         } else if (domain === 'newsletter') {
             finalName = `Channel: ${idPart.substring(0, 8)}...`;
@@ -768,8 +763,16 @@ const transformChat = (c, instanceName) => {
         }
     }
 
+    // Unified ID Logic: Always prefer Phone JID over LID for the Chat ID
+    let finalId = fullJid;
+    if (fullJid.includes('@lid')) {
+        const linked = getLinkedIds(fullJid, instanceName);
+        const real = linked.find(x => x.includes('@s.whatsapp.net'));
+        if (real) finalId = real;
+    }
+
     return {
-        id: fullJid,
+        id: finalId, // Use the unified ID
         instanceName,
         name: finalName,
         unreadCount: c.unreadCount || 0,
@@ -1177,14 +1180,18 @@ const adminAuth = (req, res, next) => {
 
 // Admin Login
 app.post('/api/admin/login', async (req, res) => {
+    await db.read();
     const { email, password } = req.body;
 
-    // For demo: admin@wapulse.com / admin123
-    if (email === 'admin@wapulse.com' && password === 'admin123') {
-        const token = jwt.sign({ id: 'admin_1', email }, JWT_SECRET, { expiresIn: '7d' });
-        res.json({ token, message: 'تم تسجيل الدخول بنجاح' });
+    // Find user in database
+    // In production, use bcrypt here (e.g., await bcrypt.compare(password, user.passwordHash))
+    const user = db.data.users?.find(u => u.email === email && u.password === password);
+
+    if (user && (user.role === 'Administrator' || user.role === 'admin')) {
+        const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+        res.json({ token, message: 'تم تسجيل الدخول بنجاح', user: { name: user.name, email: user.email } });
     } else {
-        res.status(401).json({ message: 'بيانات الدخول غير صحيحة' });
+        res.status(401).json({ message: 'بيانات الدخول غير صحيحة أو ليس لديك صلاحيات المسؤول' });
     }
 });
 

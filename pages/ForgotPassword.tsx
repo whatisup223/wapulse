@@ -1,15 +1,14 @@
-
 import React from 'react';
 import { Mail, ArrowRight, ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import AuthLayout from '../components/AuthLayout';
+import toast from 'react-hot-toast';
 
 interface ForgotPasswordProps {
     language: 'en' | 'ar';
     onLanguageChange: (lang: 'en' | 'ar') => void;
     isDarkMode: boolean;
     onThemeToggle: () => void;
-    onBackToHome: () => void;
-    onNavigateToLogin: () => void;
 }
 
 const ForgotPassword: React.FC<ForgotPasswordProps> = ({
@@ -17,14 +16,14 @@ const ForgotPassword: React.FC<ForgotPasswordProps> = ({
     onLanguageChange,
     isDarkMode,
     onThemeToggle,
-    onBackToHome,
-    onNavigateToLogin,
 }) => {
     const isRtl = language === 'ar';
+    const navigate = useNavigate();
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        alert(isRtl ? 'تم إرسال رابط إعادة التعيين!' : 'Reset link sent!');
+        toast.success(isRtl ? 'تم إرسال رابط إعادة التعيين!' : 'Reset link sent!');
+        setTimeout(() => navigate('/login'), 2000);
     };
 
     return (
@@ -33,7 +32,7 @@ const ForgotPassword: React.FC<ForgotPasswordProps> = ({
             onLanguageChange={onLanguageChange}
             isDarkMode={isDarkMode}
             onThemeToggle={onThemeToggle}
-            onBackToHome={onBackToHome}
+            onBackToHome={() => navigate('/')}
         >
             <div className="w-full max-w-md space-y-8">
                 <div className="text-center md:text-left">
@@ -72,7 +71,7 @@ const ForgotPassword: React.FC<ForgotPasswordProps> = ({
                     <p className="text-sm text-slate-500">
                         {isRtl ? 'تذكرت كلمة المرور؟' : 'Remember your password?'}{' '}
                         <button
-                            onClick={onNavigateToLogin}
+                            onClick={() => navigate('/login')}
                             className="font-bold text-[#128C7E] hover:underline"
                         >
                             {isRtl ? 'تسجيل الدخول' : 'Sign In'}

@@ -11,7 +11,15 @@
       "email": "admin@marketation.sa",
       "password": "password123",
       "name": "A. Mansour",
-      "role": "Administrator"
+      "role": "Administrator",
+      "status": "inactive"
+    },
+    {
+      "id": "user_1770764442078",
+      "name": "Muhammed",
+      "email": "whatisup223@gmail.com",
+      "password": "123456",
+      "role": "User"
     }
   ]
 }

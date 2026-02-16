@@ -1,28 +1,24 @@
-
 import React, { useState } from 'react';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft, User } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import AuthLayout from '../components/AuthLayout';
+import toast from 'react-hot-toast';
 
 interface RegisterProps {
-    onRegister: (userData: any) => void;
     language: 'en' | 'ar';
     onLanguageChange: (lang: 'en' | 'ar') => void;
     isDarkMode: boolean;
     onThemeToggle: () => void;
-    onBackToHome: () => void;
-    onNavigateToLogin: () => void;
 }
 
 const Register: React.FC<RegisterProps> = ({
-    onRegister,
     language,
     onLanguageChange,
     isDarkMode,
     onThemeToggle,
-    onBackToHome,
-    onNavigateToLogin,
 }) => {
     const isRtl = language === 'ar';
+    const navigate = useNavigate();
     const [showPassword, setShowPassword] = useState(false);
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
@@ -45,7 +41,10 @@ const Register: React.FC<RegisterProps> = ({
             const data = await res.json();
 
             if (data.success) {
-                onRegister(data.user);
+                localStorage.setItem('user', JSON.stringify(data.user));
+                localStorage.setItem('token', data.token);
+                toast.success(isRtl ? 'تم إنشاء الحساب بنجاح' : 'Account created successfully');
+                navigate('/dashboard');
             } else {
                 setError(data.message || (isRtl ? 'فشل إنشاء الحساب' : 'Registration failed'));
             }
@@ -62,7 +61,7 @@ const Register: React.FC<RegisterProps> = ({
             onLanguageChange={onLanguageChange}
             isDarkMode={isDarkMode}
             onThemeToggle={onThemeToggle}
-            onBackToHome={onBackToHome}
+            onBackToHome={() => navigate('/')}
         >
             <div className="w-full max-w-md space-y-8">
                 <div className="text-center md:text-left">
@@ -153,7 +152,7 @@ const Register: React.FC<RegisterProps> = ({
                     <p className="text-sm text-slate-500">
                         {isRtl ? 'لديك حساب بالفعل؟' : 'Already have an account?'}{' '}
                         <button
-                            onClick={onNavigateToLogin}
+                            onClick={() => navigate('/login')}
                             className="font-bold text-[#128C7E] hover:underline"
                         >
                             {isRtl ? 'تسجيل الدخول' : 'Login'}

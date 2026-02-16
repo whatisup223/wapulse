@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import AdminLayout from '../../../components/admin/AdminLayout';
+import AdminLayout from '../../components/admin/AdminLayout';
 import { Users, DollarSign, MessageSquare, TrendingUp, Activity } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 

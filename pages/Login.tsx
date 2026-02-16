@@ -1,30 +1,24 @@
-
 import React, { useState } from 'react';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import AuthLayout from '../components/AuthLayout';
+import toast from 'react-hot-toast';
 
 interface LoginProps {
-    onLogin: (userData: any) => void;
     language: 'en' | 'ar';
     onLanguageChange: (lang: 'en' | 'ar') => void;
     isDarkMode: boolean;
     onThemeToggle: () => void;
-    onBackToHome: () => void;
-    onNavigateToRegister: () => void;
-    onNavigateToForgotPassword: () => void;
 }
 
 const Login: React.FC<LoginProps> = ({
-    onLogin,
     language,
     onLanguageChange,
     isDarkMode,
     onThemeToggle,
-    onBackToHome,
-    onNavigateToRegister,
-    onNavigateToForgotPassword,
 }) => {
     const isRtl = language === 'ar';
+    const navigate = useNavigate();
     const [showPassword, setShowPassword] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -46,7 +40,10 @@ const Login: React.FC<LoginProps> = ({
             const data = await res.json();
 
             if (data.success) {
-                onLogin(data.user);
+                localStorage.setItem('user', JSON.stringify(data.user));
+                localStorage.setItem('token', data.token);
+                toast.success(isRtl ? 'تم تسجيل الدخول بنجاح' : 'Logged in successfully');
+                navigate('/dashboard');
             } else {
                 setError(data.message || (isRtl ? 'بيانات الدخول غير صحيحة' : 'Invalid credentials'));
             }
@@ -63,7 +60,7 @@ const Login: React.FC<LoginProps> = ({
             onLanguageChange={onLanguageChange}
             isDarkMode={isDarkMode}
             onThemeToggle={onThemeToggle}
-            onBackToHome={onBackToHome}
+            onBackToHome={() => navigate('/')}
         >
             <div className="w-full max-w-md space-y-8">
                 <div className="text-center md:text-left">
@@ -102,7 +99,7 @@ const Login: React.FC<LoginProps> = ({
                             <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">{isRtl ? 'كلمة المرور' : 'Password'}</label>
                             <button
                                 type="button"
-                                onClick={onNavigateToForgotPassword}
+                                onClick={() => navigate('/forgot-password')}
                                 className="text-xs font-bold text-[#128C7E] hover:underline"
                             >
                                 {isRtl ? 'نسيت كلمة المرور؟' : 'Forgot Password?'}
@@ -148,7 +145,7 @@ const Login: React.FC<LoginProps> = ({
                     <p className="text-sm text-slate-500">
                         {isRtl ? 'ليس لديك حساب؟' : "Don't have an account?"}{' '}
                         <button
-                            onClick={onNavigateToRegister}
+                            onClick={() => navigate('/register')}
                             className="font-bold text-[#128C7E] hover:underline"
                         >
                             {isRtl ? 'سجل الآن' : 'Register now'}

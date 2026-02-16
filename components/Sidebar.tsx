@@ -1,24 +1,21 @@
-
 import React from 'react';
 import {
   LayoutDashboard,
   MessageSquare,
   Megaphone,
   Users,
-  Link,
+  Link as LinkIcon,
   BarChart3,
   Settings,
-  ChevronLeft,
-  ChevronRight,
   X,
   Zap,
-  LogOut
+  LogOut,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
-import { Page } from '../types';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 interface SidebarProps {
-  currentPage: Page;
-  setCurrentPage: (page: Page) => void;
   isCollapsed: boolean;
   setIsCollapsed: (collapsed: boolean) => void;
   isMobileOpen: boolean;
@@ -28,8 +25,6 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
-  currentPage,
-  setCurrentPage,
   isCollapsed,
   setIsCollapsed,
   isMobileOpen,
@@ -38,15 +33,17 @@ const Sidebar: React.FC<SidebarProps> = ({
   onLogout
 }) => {
   const isRtl = language === 'ar';
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const menuItems = [
-    { id: 'dashboard', label: isRtl ? 'لوحة التحكم' : 'Dashboard', icon: LayoutDashboard },
-    { id: 'inbox', label: isRtl ? 'صندوق الوارد' : 'Inbox', icon: MessageSquare },
-    { id: 'campaigns', label: isRtl ? 'الحملات' : 'Campaigns', icon: Megaphone },
-    { id: 'contacts', label: isRtl ? 'جهات الاتصال' : 'Contacts', icon: Users },
-    { id: 'connection', label: isRtl ? 'الربط' : 'Connection', icon: Link },
-    { id: 'analytics', label: isRtl ? 'التحليلات' : 'Analytics', icon: BarChart3 },
-    { id: 'settings', label: isRtl ? 'الإعدادات' : 'Settings', icon: Settings },
+    { path: '/dashboard', label: isRtl ? 'لوحة التحكم' : 'Dashboard', icon: LayoutDashboard },
+    { path: '/inbox', label: isRtl ? 'صندوق الوارد' : 'Inbox', icon: MessageSquare },
+    { path: '/campaigns', label: isRtl ? 'الحملات' : 'Campaigns', icon: Megaphone },
+    { path: '/contacts', label: isRtl ? 'جهات الاتصال' : 'Contacts', icon: Users },
+    { path: '/connection', label: isRtl ? 'الربط' : 'Connection', icon: LinkIcon },
+    { path: '/analytics', label: isRtl ? 'التحليلات' : 'Analytics', icon: BarChart3 },
+    { path: '/settings', label: isRtl ? 'الإعدادات' : 'Settings', icon: Settings },
   ];
 
   return (
@@ -76,19 +73,22 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto scrollbar-hide mt-4">
-            {menuItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setCurrentPage(item.id as Page)}
-                className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 group
-                  ${currentPage === item.id
-                    ? 'bg-slate-950 text-white dark:bg-emerald-600 dark:text-white shadow-lg shadow-slate-200 dark:shadow-emerald-900/10'
-                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900'}`}
-              >
-                <item.icon className={`w-5 h-5 transition-transform duration-300 group-hover:scale-110`} />
-                {(!isCollapsed || isMobileOpen) && <span className="font-bold text-sm tracking-tight">{item.label}</span>}
-              </button>
-            ))}
+            {menuItems.map((item) => {
+              const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+              return (
+                <button
+                  key={item.path}
+                  onClick={() => navigate(item.path)}
+                  className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 group
+                    ${isActive
+                      ? 'bg-slate-950 text-white dark:bg-emerald-600 dark:text-white shadow-lg shadow-slate-200 dark:shadow-emerald-900/10'
+                      : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900'}`}
+                >
+                  <item.icon className={`w-5 h-5 transition-transform duration-300 group-hover:scale-110`} />
+                  {(!isCollapsed || isMobileOpen) && <span className="font-bold text-sm tracking-tight">{item.label}</span>}
+                </button>
+              );
+            })}
           </nav>
 
           <div className="p-4 mt-auto border-t border-slate-50 dark:border-white/5 space-y-2">
