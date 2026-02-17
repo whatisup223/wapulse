@@ -52,6 +52,29 @@ if (!db.data.jidLinks) db.data.jidLinks = [];
 if (!db.data.chats) db.data.chats = [];
 if (!db.data.messages) db.data.messages = [];
 if (!db.data.contacts) db.data.contacts = [];
+
+// STARTUP FIX: Reset any 'processing' recipients to 'pending'
+// This prevents campaigns from skipping contacts if the server restarts unexpectedly
+if (db.data.campaigns) {
+    let recoveredCount = 0;
+    db.data.campaigns.forEach(c => {
+        if (c.recipientsList) {
+            c.recipientsList.forEach(r => {
+                if (r.status === 'processing') {
+                    r.status = 'pending';
+                    recoveredCount++;
+                }
+            });
+        }
+        // Also reset consecutive failures on startup
+        c.consecutiveFailedCount = 0;
+    });
+    if (recoveredCount > 0) {
+        console.log(`🔄 Recovered ${recoveredCount} recipients from 'processing' state.`);
+        await db.write();
+    }
+}
+
 await db.write();
 
 const EVOLUTION_URL = process.env.VITE_EVOLUTION_URL;
@@ -618,6 +641,7 @@ async function processQueue() {
                 if (response.status === 200 || response.status === 201) {
                     nextRecipient.status = 'sent';
                     activeCampaign.sentCount++;
+                    activeCampaign.consecutiveFailedCount = 0; // Reset failure counter on success
                     if (activeCampaign.senderInstance === 'all') {
                         activeCampaign.sentSinceRotation = (activeCampaign.sentSinceRotation || 0) + 1;
                     }
@@ -625,13 +649,24 @@ async function processQueue() {
                 } else {
                     nextRecipient.status = 'failed';
                     activeCampaign.failedCount++;
+                    activeCampaign.consecutiveFailedCount = (activeCampaign.consecutiveFailedCount || 0) + 1;
                     console.error(`[Queue] ❌ Failed to send to ${nextRecipient.number}: HTTP ${response.status}`);
                 }
             } catch (error) {
                 console.error(`[Queue] ❌ Send failure to ${nextRecipient.number}:`, error.message);
                 nextRecipient.status = 'failed';
                 activeCampaign.failedCount++;
+                activeCampaign.consecutiveFailedCount = (activeCampaign.consecutiveFailedCount || 0) + 1;
                 if (activeCampaign.senderInstance === 'all') activeCampaign.currentSender = null;
+            }
+
+            // SAFETY: Pause campaign if too many consecutive errors (Connection likely dead)
+            if ((activeCampaign.consecutiveFailedCount || 0) >= 10) {
+                console.log(`[Queue] 🛑 Pausing campaign "${activeCampaign.name}" due to 10 consecutive failures.`);
+                activeCampaign.status = 'paused';
+                await db.write();
+                isProcessing = false;
+                return;
             }
 
             // Update Progress
